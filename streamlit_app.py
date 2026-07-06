@@ -21,30 +21,50 @@ st.markdown("""
 st.title("🦅 AUTONOMER KI-AGENT — KOMMANDOZENTRALE")
 st.caption("24/7 Multi-Timeframe Scan & Evolution-Modus aktiv")
 
-# --- DATEN-REFRESH ---
+# --- DATEN-REFRESH (An deine echten Tabellennamen angepasst) ---
 @st.cache_data(ttl=2)
 def load_data():
     mem = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
-    trades = requests.get(f"{SUPABASE_URL}/rest/v1/trade_history", headers=HEADERS).json()
-    chat = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS).json()
+    trades = requests.get(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS).json()
+    chat = requests.get(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS).json()
     return mem, trades, chat
 
 mem_data, trades_data, chat_data = load_data()
 
-# --- RECHTE SEITE: MULTI-STATISTIKEN ---
-if mem_data:
-    m = mem_data[0]
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("💰 Aktuelles Guthaben", f"${float(m.get('current_balance', 100)):.2f}")
-    with col2:
-        st.metric("🟢 All-Time Gewinn", f"+${float(m.get('total_profit_usd', 0)):.2f}")
-    with col3:
-        st.metric("🔴 All-Time Verlust", f"-${float(m.get('total_loss_usd', 0)):.2f}")
-    with col4:
-        # Errechnet das gesamte eingesetzte Kapital aus der Historie
-        total_invested = sum([float(t["margin_usd"]) for t in trades_data]) if trades_data else 0.0
-        st.metric("🔥 Gesamtes Einsatz-Volumen", f"${total_invested:.2f}")
+# --- MATHEMATISCHE KOORDINATION DER STATISTIKEN (An deine echten Spalten angepasst) ---
+aktuelles_guthaben = 200.0  # Dein Startkapital als mathematische Basis
+all_time_gewinn = 0.0
+all_time_verlust = 0.0
+gesamtes_einsatz_volumen = 0.0
+
+if isinstance(trades_data, list) and len(trades_data) > 0:
+    for t in trades_data:
+        status = t.get("Status")
+        pnl = float(t.get("net_pnl") or 0.0)
+        marge = float(t.get("Marge in USD") or 0.0)
+        
+        # 1. Nur das Volumen der aktuell AKTIVEN Trades addieren
+        if status == "ACTIVE":
+            gesamtes_einsatz_volumen += marge
+            
+        # 2. Gewinne und Verluste aus geschlossenen Positionen verrechnen
+        if status == "CLOSED":
+            if pnl > 0:
+                all_time_gewinn += pnl
+            else:
+                all_time_verlust += abs(pnl)
+            aktuelles_guthaben += pnl
+
+# --- ANZEIGE DER LIVE-METRIKEN ---
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("💰 Aktuelles Guthaben", f"${aktuelles_guthaben:.2f}")
+with col2:
+    st.metric("🟢 All-Time Gewinn", f"+${all_time_gewinn:.2f}")
+with col3:
+    st.metric("🔴 All-Time Verlust", f"-${all_time_verlust:.2f}")
+with col4:
+    st.metric("🔥 Gesamtes Einsatz-Volumen", f"${gesamtes_einsatz_volumen:.2f}")
 
 st.markdown("---")
 
@@ -55,8 +75,8 @@ with left_col:
     st.subheader("📜 Live-Positionen & Strategie-Ziele")
     if trades_data:
         df = pd.DataFrame(trades_data)
-        # Relevante Spalten filtern für die Übersicht
-        display_cols = ["asset", "direction", "leverage", "entry_price", "margin_usd", "status", "rationale"]
+        # Relevante Spalten filtern basierend auf deinen echten deutschen Spaltennamen
+        display_cols = ["Vermögenswert", "Richtung", "Hebelwirkung", "Eintrittspreis", "Ausstiegspreis", "Marge in USD", "Status", "Begründung"]
         available_cols = [c for c in display_cols if c in df.columns]
         st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True)
     else:
@@ -81,19 +101,19 @@ with right_col:
     chat_container = st.container(height=350)
     with chat_container:
         if chat_data:
-            for msg in sorted(chat_data, key=lambda x: x.get('id', 0)):
+            # Sortiert nach deinem Spaltennamen 'Ausweis' (deine ID)
+            for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0)):
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
         else:
             st.write("_Noch keine Nachrichten. Schreib deinem Agenten etwas!_")
 
-    # Chat-Eingabe
+    # Chat-Eingabe (Injektion in deine Tabelle 'Chatnachrichten')
     if prompt := st.chat_input("Frag den Agenten nach seiner Begründung oder gib ihm Infos..."):
         with st.chat_message("user"):
             st.write(prompt)
         
-        # In Supabase speichern, damit der Worker auf Render es liest und antwortet
-        requests.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS, json={"role": "user", "content": prompt})
+        requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "user", "content": prompt})
         st.rerun()
 
 # --- SIDEBAR: ASSETS & LERN-FORTSCHRITT ---
