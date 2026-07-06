@@ -22,7 +22,7 @@ st.title("🦅 AUTONOMER KI-AGENT — KOMMANDOZENTRALE")
 st.caption("24/7 Multi-Timeframe Scan & Evolution-Modus aktiv")
 
 # --- DATEN-REFRESH ---
-@st.cache_data(ttl=2)
+@st.cache_data(ttl=1)  # Cache auf 1 Sekunde reduziert für schnellere Chat-Reaktion
 def load_data():
     try:
         mem = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
@@ -35,7 +35,7 @@ def load_data():
 mem_data, trades_data, chat_data = load_data()
 
 # --- MATHEMATISCHE KOORDINATION DER STATISTIKEN ---
-aktuelles_guthaben = 200.0  # Startkapital
+aktuelles_guthaben = 200.0  
 all_time_gewinn = 0.0
 all_time_verlust = 0.0
 gesamtes_einsatz_volumen = 0.0
@@ -48,11 +48,9 @@ if isinstance(trades_data, list) and len(trades_data) > 0:
         pnl = float(t.get("net_pnl") or 0.0)
         marge = float(t.get("Marge in USD") or 0.0)
         
-        # 1. Nur das Volumen der aktuell AKTIVEN Trades addieren
         if status == "ACTIVE":
             gesamtes_einsatz_volumen += marge
             
-        # 2. Gewinne und Verluste aus geschlossenen Positionen verrechnen
         if status == "CLOSED":
             if pnl > 0:
                 all_time_gewinn += pnl
@@ -77,7 +75,6 @@ st.markdown("---")
 left_col, right_col = st.columns([1.2, 1])
 
 with left_col:
-    # NEU: Die detaillierten Analyse-Fenster für JEDEN aktiven Trade (Zusätzlich hinzugefügt!)
     st.subheader("🔍 Analyse-Fenster der aktiven Handelspositionen")
     active_trades = [t for t in trades_data if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades_data, list) else []
     
@@ -98,7 +95,6 @@ with left_col:
     else:
         st.info("Aktuell keine laufenden Positionen im Risiko. Triebwerk scannt...")
 
-    # Deine gewohnte Live-Tabelle (Erhalten!)
     st.subheader("📜 Live-Positionen & Strategie-Ziele")
     if isinstance(trades_data, list) and len(trades_data) > 0 and isinstance(trades_data[0], dict):
         df = pd.DataFrame(trades_data)
@@ -108,7 +104,6 @@ with left_col:
     else:
         st.info("Aktuell keine aktiven Trades in der Handelsgeschichte.")
 
-    # Dein 24/7 Agenten-Logbuch (Wieder vollständig da!)
     st.subheader("🖥️ 24/7 Agenten-Logbuch (Was er aktuell tut)")
     st.markdown(
         f"""<div class="log-box">
@@ -121,7 +116,6 @@ with left_col:
     )
 
 with right_col:
-    # Dein interaktiver KI-Diskurs (Wieder vollständig da!)
     st.subheader("💬 Interaktiver KI-Diskurs")
     
     chat_container = st.container(height=350)
@@ -133,14 +127,24 @@ with right_col:
         else:
             st.write("_Noch keine Nachrichten. Schreib deinem Agenten etwas!_")
 
+    # FIX: Korrigierte und stabilisierte Chat-Eingabe ohne Blockade
     if prompt := st.chat_input("Frag den Agenten nach seiner Begründung oder gib ihm Infos..."):
+        # Sofortige Anzeige im UI, damit es flüssig wirkt
         with st.chat_message("user"):
             st.write(prompt)
         
-        requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "user", "content": prompt})
+        # Senden an Supabase
+        res = requests.post(
+            f"{SUPABASE_URL}/rest/v1/Chatnachrichten", 
+            headers=HEADERS, 
+            json={"role": "user", "content": prompt}
+        )
+        
+        # Cache löschen und App sauber aktualisieren
+        st.cache_data.clear()
         st.rerun()
 
-# --- SIDEBAR: ASSETS & LERN-FORTSCHRITT (Wieder vollständig da!) ---
+# --- SIDEBAR: ASSETS & LERN-FORTSCHRITT ---
 with st.sidebar:
     st.header("🧠 KI-Evolutionsstufen")
     st.write("**Aktuelle Überwachungs-Dichte:**")
@@ -154,6 +158,5 @@ with st.sidebar:
                 st.caption(f"🛡️ {lesson}")
         else:
             st.caption("• Analysiere Marktzyklen für autonomes Hebel-Trading (10x).")
-            st.caption("• Maximiere Datenaufnahme zur Beschleunigung des Lernprozesses.")
     else:
         st.caption("• Analysiere Marktzyklen für autonomes Hebel-Trading (10x).")
