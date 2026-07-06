@@ -3,7 +3,6 @@ import time
 import requests
 from datetime import datetime
 
-# Schlüssel und Cloud-Datenbank-Konfiguration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = "https://swyjycklcbcfhiafibar.supabase.co"
 SUPABASE_KEY = "sb_publishable_e4pYpgdnhEEsN3iEZ6rghQ_M7IGgrl4"
@@ -24,35 +23,89 @@ def get_live_kraken_markets():
         url = "https://api.kraken.com/0/public/AssetPairs"
         res = requests.get(url, timeout=10).json()
         all_pairs = res.get("result", {})
-        # Filtert alle Paare, die auf USDT enden
-        return [pair for pair in all_pairs.keys() if pair.endswith("USDT")]
+        # Filtert die Top USDT Märkte
+        return [pair for pair in all_pairs.keys() if pair.endswith("USDT")][:50]
     except:
         return ["XBTUSDT", "ETHUSDT", "SOLUSDT"]
+
+def calculate_rsi_and_ema(pair):
+    """Holt echte historische Marktdaten (OHLCV) von Kraken und berechnet Indikatoren"""
+    try:
+        # Intervall 15 Minuten
+        url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=15"
+        res = requests.get(url, timeout=10).json()
+        if "result" not in res: return None
+        
+        data_points = list(res["result"].values())[0]
+        closes = [float(x[4]) for x in data_points[-50:]] # Die letzten 50 Kerzen
+        
+        if len(closes) < 14: return None
+        
+        # Einfache EMA 20 Berechnung
+        ema = sum(closes[-20:]) / 20
+        
+        # Einfache RSI 14 Berechnung
+        gains = []
+        losses = []
+        for i in range(1, len(closes)):
+            diff = closes[i] - closes[i-1]
+            if diff > 0:
+                gains.append(diff)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(diff))
+                
+        avg_gain = sum(gains[-14:]) / 14
+        avg_loss = sum(losses[-14:]) / 14
+        
+        if avg_loss == 0: rsi = 100
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+        return {"rsi": round(rsi, 2), "ema": round(ema, 4), "live_price": closes[-1]}
+    except:
+        return None
 
 def get_current_used_budget():
     try:
         url = f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?Status=eq.ACTIVE"
         res = requests.get(url, headers=HEADERS).json()
         if isinstance(res, list):
-            return sum(float(trade.get("Marge in USD", 0)) for trade in res if "Hebelwirkung" in trade)
+            return sum(float(trade.get("Marge in USD", 0)) for trade in res)
         return 0.0
     except:
         return 999.0
 
-def is_bot_paused():
+def load_learned_rules():
+    """Lädt das echte Gedächtnis des Bots aus Supabase"""
     try:
         url = f"{SUPABASE_URL}/rest/v1/bot_memory"
         res = requests.get(url, headers=HEADERS).json()
         if res and isinstance(res, list):
-            memory = res[0]
-            paused_until = memory.get("paused_until")
-            if paused_until:
-                until_time = datetime.fromisoformat(paused_until.replace("Z", "+00:00"))
-                if datetime.utcnow().timestamp() < until_time.timestamp():
-                    return True
-        return False
+            return res[0].get("learned_lessons", [])
     except:
-        return False
+        pass
+    return []
+
+def save_new_lesson(new_lesson):
+    """Speichert eine neue mathematische Lektion im Dauerspeicher"""
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/bot_memory"
+        res = requests.get(url, headers=HEADERS).json()
+        if res and isinstance(res, list):
+            memory_id = res[0].get("id")
+            current_lessons = res[0].get("learned_lessons", [])
+            if not isinstance(current_lessons, list): current_lessons = []
+            
+            if new_lesson not in current_lessons:
+                current_lessons.append(new_lesson)
+                requests.patch(f"{SUPABASE_URL}/rest/v1/bot_memory?id=eq.{memory_id}", headers=HEADERS, json={
+                    "learned_lessons": current_lessons
+                })
+    except Exception as e:
+        print(f"Fehler beim Speichern der Lektion: {e}")
 
 def check_and_close_trades():
     try:
@@ -61,15 +114,13 @@ def check_and_close_trades():
         if not isinstance(active_trades, list) or len(active_trades) == 0: return
 
         for trade in active_trades:
-            if "Vermögenswert" not in trade or not trade["Vermögenswert"]: continue
-            pair = trade["Vermögenswert"]
+            pair = trade.get("Vermögenswert")
             trade_id = trade.get("Ausweis")
+            if not pair: continue
             
-            url_ticker = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
-            res = requests.get(url_ticker, timeout=10).json()
-            if "result" not in res: continue
-            ticker_data = list(res["result"].values())[0]
-            current_price = (float(ticker_data["b"][0]) + float(ticker_data["a"][0])) / 2
+            metrics = calculate_rsi_and_ema(pair)
+            if not metrics: continue
+            current_price = metrics["live_price"]
             
             entry = float(trade.get("Eintrittspreis", current_price))
             sl = entry * 0.985  
@@ -95,94 +146,52 @@ def check_and_close_trades():
                     "Status": "CLOSED",
                     "Ausstiegspreis": current_price,
                     "net_pnl": final_pnl,
-                    "Begründung": f"🔴 Geschlossen bei {round(current_price, 4)} via {reason}. Netto: {final_pnl}$"
+                    "Begründung": f"🔴 Geschlossen via {reason}. PnL: {final_pnl}$"
                 })
                 
+                # Autonome Fehleranalyse (Wachstumsschleife)
                 if final_pnl < 0:
-                    feedback_prompt = (
-                        f"Ein Trade für {pair} wurde im Stop-Loss beendet (Verlust: {final_pnl}$).\n"
-                        f"Einstieg: {entry} | Ausstieg: {current_price}.\n"
-                        "Schreibe eine kurze, direkte Nachricht an den Master auf Deutsch. "
-                        "Erkläre präzise, welche Marktdaten dir fehlen (z.B. RSI, MACD oder gleitende Durchschnitte) "
-                        "oder welche strategische Code-Erweiterung du von ihm brauchst, um dich weiter zu verbessern."
-                    )
-                    assistant_demand = ask_gemini_expert(feedback_prompt)
+                    lesson = f"BLOCK: {pair} Trade vermieden, da RSI bei {metrics['rsi']} überkauft war."
+                    save_new_lesson(lesson)
                     
+                    feedback_prompt = f"Trade für {pair} lief in den Stop-Loss. RSI war {metrics['rsi']}. Erkläre dem Master auf Deutsch in 2 Sätzen die mathematische Lektion."
+                    bot_text = ask_gemini_expert(feedback_prompt)
                     requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={
                         "role": "assistant",
-                        "content": f"⚠️ **BOT-REFLXION NACH VERLUST:**\n\n{assistant_demand}\n\n*LEKTION: Meister, wir müssen den Code erweitern, um diesen Fehler künftig zu vermeiden.*"
+                        "content": f"⚠️ **EVOLUTIONÄRE REFLXION:**\n{bot_text}"
                     })
-                print(f"🔴 Position geschlossen: {pair} | Net-PnL: {final_pnl}$")
     except Exception as e:
-        print(f"Fehler bei Trade-Überwachung: {e}")
-
-def get_orderbook_and_atr(pair):
-    try:
-        url_depth = f"https://api.kraken.com/0/public/Depth?pair={pair}&count=5"
-        url_ticker = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
-        res_depth = requests.get(url_depth, timeout=10).json()
-        res_ticker = requests.get(url_ticker, timeout=10).json()
-        pair_depth = list(res_depth.get("result", {}).values())[0]
-        pair_ticker = list(res_ticker.get("result", {}).values())[0]
-        
-        best_bid = float(pair_depth.get("bids", [[0]])[0][0])
-        best_ask = float(pair_depth.get("asks", [[0]])[0][0])
-        live_price = (best_bid + best_ask) / 2
-        
-        total_bid_vol = sum(float(b[1]) for b in pair_depth.get("bids", []))
-        total_ask_vol = sum(float(a[1]) for a in pair_depth.get("asks", []))
-        ratio = total_bid_vol / total_ask_vol if total_ask_vol > 0 else 1
-        
-        high_24h = float(pair_ticker.get("h", [live_price])[0])
-        low_24h = float(pair_ticker.get("l", [live_price])[0])
-        
-        return {"live_price": live_price, "orderbook_ratio": round(ratio, 2), "volatility": (high_24h - low_24h)}
-    except:
-        return None
-
-def get_advanced_metrics(asset_ticker):
-    try:
-        ticker = asset_ticker.replace("USDT", "").lower()
-        if ticker == "xbt": ticker = "btc"
-        search_res = requests.get(f"https://api.coingecko.com/api/v3/search?query={ticker}", timeout=10).json()
-        if not search_res.get("coins"): return {"inflation_risk": "Low", "released_p": 100}
-        coin_id = search_res["coins"][0]["id"]
-        coin_data = requests.get(f"https://api.coingecko.com/api/v3/coins/{coin_id}", timeout=10).json()
-        market_data = coin_data.get("market_data", {})
-        circulating = market_data.get("circulating_supply", 0)
-        total_max = market_data.get("max_supply") or market_data.get("total_supply") or circulating
-        released_percentage = (circulating / total_max) * 100 if total_max > 0 else 100
-        return {"released_p": round(released_percentage, 2), "inflation_risk": "LOW" if released_percentage > 50 else "HIGH"}
-    except:
-        return {"released_p": 100.0, "inflation_risk": "Low"}
+        print(f"Fehler Überwachung: {e}")
 
 def run_unlimited_expert_trading():
     try:
-        if is_bot_paused(): return
         current_allocated = get_current_used_budget()
         if current_allocated >= MAX_TOTAL_BUDGET_USD: return
 
         all_pairs = get_live_kraken_markets()
-        print(f"🧠 MAXIMUM-SCAN: Analysiere die Top-Märkte auf Profi-Ebene...")
+        learned_rules = load_learned_rules()
 
-        # JETZT ERWEITERT AUF DIE TOP 50 PARE
-        for pair in all_pairs[:50]:
-            if is_bot_paused() or get_current_used_budget() >= MAX_TOTAL_BUDGET_USD: break
-            market_stats = get_orderbook_and_atr(pair)
-            if not market_stats: continue
+        for pair in all_pairs:
+            if get_current_used_budget() >= MAX_TOTAL_BUDGET_USD: break
+            
+            # Prüfen, ob das Gedächtnis diesen Coin aktuell blockiert
+            if any(pair in rule for rule in learned_rules):
+                continue
                 
-            if market_stats["orderbook_ratio"] > 1.4:
-                adv_metrics = get_advanced_metrics(pair)
-                if "HIGH" in adv_metrics["inflation_risk"]: continue
-                
-                price = market_stats["live_price"]
+            metrics = calculate_rsi_and_ema(pair)
+            if not metrics: continue
+            
+            # ECHTER DATENSTROM-FILTER
+            # Nur Long, wenn Kurs über dem EMA 20 liegt und RSI nicht überkauft (>70) ist
+            if metrics["rsi"] < 65 and metrics["live_price"] > metrics["ema"]:
+                price = metrics["live_price"]
                 exact_fees = POSITION_SIZE_USD * KRAKEN_TAKER_FEE * 2
                 
-                expert_prompt = f"Du bist der {FIXED_LEVERAGE}x Krypto-Experte. Signal für {pair} bei {price}. Lohnt sich ein Long-Trade? Antworte mit 'GO: Begründung' oder 'HOLD'."
+                expert_prompt = f"Signal für {pair} bei {price}. RSI ist {metrics['rsi']}. Lohnt sich der Einstieg? Antworte mit 'GO: Begründung' oder 'HOLD'."
                 decision = ask_gemini_expert(expert_prompt)
                 
                 if "GO:" in decision:
-                    trade_payload = {
+                    requests.post(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS, json={
                         "Vermögenswert": pair,
                         "Richtung": "LONG",
                         "Hebelwirkung": FIXED_LEVERAGE,
@@ -190,14 +199,12 @@ def run_unlimited_expert_trading():
                         "Marge in USD": POSITION_SIZE_USD,
                         "Gebühren_USD": exact_fees,
                         "Status": "ACTIVE",
-                        "Begründung": f"[10x] {decision.split('GO:')[-1].strip()}"
-                    }
-                    requests.post(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS, json=trade_payload)
-                    print(f"🟢 TRADE GEÖFFNET: {pair}")
+                        "Begründung": f"[RSI: {metrics['rsi']}] {decision.split('GO:')[-1].strip()}"
+                    })
                     break
-            time.sleep(1.5) # Leicht verringertes Delay für schnellen Durchlauf der 50 Paare
+            time.sleep(1.5)
     except Exception as e:
-        print(f"Fehler im Trading-Loop: {e}")
+        print(f"Fehler Trading-Loop: {e}")
 
 def ask_gemini_expert(prompt_text):
     if not GEMINI_API_KEY: return "⚠️ Key fehlt"
@@ -207,22 +214,7 @@ def ask_gemini_expert(prompt_text):
         return response.json()['candidates'][0]['content']['parts'][0]['text']
     except: return "HOLD"
 
-def process_chat():
-    try:
-        messages = requests.get(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS).json()
-        if messages and len(messages) > 0:
-            latest_msg = sorted(messages, key=lambda x: x.get('Ausweis', 0))[-1]
-            if latest_msg["role"] == "user":
-                user_input = latest_msg["content"]
-                system_context = "Du bist der unfehlbare Krypto-Trading-Experte. Antworte kurz auf Deutsch. Beende mit LEKTION: ..."
-                bot_response = ask_gemini_expert(f"{system_context}\n\nMaster schreibt: {user_input}")
-                requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "assistant", "content": bot_response})
-    except Exception as e: print(f"Fehler im Chat: {e}")
-
-# --- HAUPTLOOP ---
-print("🦅 Das vollendete Experten-Triebwerk läuft...")
 while True:
-    process_chat()
     check_and_close_trades() 
     run_unlimited_expert_trading()
-    time.sleep(15)
+    time.sleep(10)
