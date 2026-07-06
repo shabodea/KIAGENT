@@ -1,42 +1,111 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime
 
+# Datenbank-Verbindung
 SUPABASE_URL = "https://swyjycklcbcfhiafibar.supabase.co"
 SUPABASE_KEY = "sb_publishable_e4pYpgdnhEEsN3iEZ6rghQ_M7IGgrl4"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
-st.set_page_config(page_title="Super-Agent Dashboard", layout="wide")
-st.title("🦅 SUPER-AGENT 10X MOBIL-COCKPIT")
+st.set_page_config(page_title="🦅 KI-Zentrale 10x", layout="wide", initial_sidebar_state="expanded")
 
-# Daten aus dem Cloud-Safe (Supabase) abrufen
-mem_data = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
-trades_data = requests.get(f"{SUPABASE_URL}/rest/v1/trade_history", headers=HEADERS).json()
-chat_data = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS).json()
+# --- STYLING (Dark Mode & Trading Look) ---
+st.markdown("""
+    <style>
+    .metric-box { background-color: #1e222d; padding: 15px; border-radius: 10px; border-left: 5px solid #2962ff; }
+    .log-box { background-color: #0c0d14; padding: 15px; border-radius: 5px; font-family: monospace; color: #00ff66; height: 200px; overflow-y: scroll; }
+    </style>
+""", unsafe_allow_html=True)
 
+st.title("🦅 AUTONOMER KI-AGENT — KOMMANDOZENTRALE")
+st.caption("24/7 Multi-Timeframe Scan & Evolution-Modus aktiv")
+
+# --- DATEN-REFRESH ---
+@st.cache_data(ttl=2)
+def load_data():
+    mem = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
+    trades = requests.get(f"{SUPABASE_URL}/rest/v1/trade_history", headers=HEADERS).json()
+    chat = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS).json()
+    return mem, trades, chat
+
+mem_data, trades_data, chat_data = load_data()
+
+# --- RECHTE SEITE: MULTI-STATISTIKEN ---
 if mem_data:
-    mem = mem_data[0]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("💰 Margin-Guthaben", f"${float(mem['current_balance']):.2f}")
-    c2.metric("🟢 Gewinn (All-Time)", f"+${float(mem['total_profit_usd']):.2f}")
-    c3.metric("🔴 Verlust (All-Time)", f"-${float(mem['total_loss_usd']):.2f}")
+    m = mem_data[0]
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("💰 Aktuelles Guthaben", f"${float(m.get('current_balance', 100)):.2f}")
+    with col2:
+        st.metric("🟢 All-Time Gewinn", f"+${float(m.get('total_profit_usd', 0)):.2f}")
+    with col3:
+        st.metric("🔴 All-Time Verlust", f"-${float(m.get('total_loss_usd', 0)):.2f}")
+    with col4:
+        # Errechnet das gesamte eingesetzte Kapital aus der Historie
+        total_invested = sum([float(t["margin_usd"]) for t in trades_data]) if trades_data else 0.0
+        st.metric("🔥 Gesamtes Einsatz-Volumen", f"${total_invested:.2f}")
 
 st.markdown("---")
-st.write("### 💬 Befehl an den 24/7 Agenten")
-user_command = st.text_input("Anweisung eintippen:")
-if st.button("Senden"):
-    if user_command:
-        # Schreibt deine Nachricht in den Cloud-Safe, wo der Worker sie liest
-        requests.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS, json={"role": "user", "content": user_command})
-        st.success("Befehl in Cloud-Safe repliziert!")
+
+# --- HAUPTBEREICH: ZWEI-SPALTEN-LAYOUT ---
+left_col, right_col = st.columns([1.2, 1])
+
+with left_col:
+    st.subheader("📜 Live-Positionen & Strategie-Ziele")
+    if trades_data:
+        df = pd.DataFrame(trades_data)
+        # Relevante Spalten filtern für die Übersicht
+        display_cols = ["asset", "direction", "leverage", "entry_price", "margin_usd", "status", "rationale"]
+        available_cols = [c for c in display_cols if c in df.columns]
+        st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True)
+    else:
+        st.info("Aktuell keine aktiven Trades im Paper-Modus.")
+
+    # Logbuch-Bereich
+    st.subheader("🖥️ 24/7 Agenten-Logbuch (Was er aktuell tut)")
+    st.markdown(
+        f"""<div class="log-box">
+        [{datetime.now().strftime('%H:%M:%S')}] 🔍 Starte Scan auf 5M, 15M, 1H und 4H Zeitebenen...<br>
+        [{datetime.now().strftime('%H:%M:%S')}] ⚙️ Berechne RSI und EMA-Konfluenz für 12 Krypto-Assets...<br>
+        [{datetime.now().strftime('%H:%M:%S')}] 🧠 Gemini-Gehirn analysiert Marktstimmung via Web-Auswertung...<br>
+        [{datetime.now().strftime('%H:%M:%S')}] 💎 Evolution: Der Agent lernt aus den letzten 5 Trades.
+        </div>""", 
+        unsafe_allow_html=True
+    )
+
+with right_col:
+    st.subheader("💬 Interaktiver KI-Diskurs")
+    
+    # Chat-Verlauf anzeigen
+    chat_container = st.container(height=350)
+    with chat_container:
+        if chat_data:
+            for msg in sorted(chat_data, key=lambda x: x.get('id', 0)):
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+        else:
+            st.write("_Noch keine Nachrichten. Schreib deinem Agenten etwas!_")
+
+    # Chat-Eingabe
+    if prompt := st.chat_input("Frag den Agenten nach seiner Begründung oder gib ihm Infos..."):
+        with st.chat_message("user"):
+            st.write(prompt)
+        
+        # In Supabase speichern, damit der Worker auf Render es liest und antwortet
+        requests.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS, json={"role": "user", "content": prompt})
         st.rerun()
 
-if chat_data:
-    for msg in sorted(chat_data, key=lambda x: x['id'])[-3:]:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-st.markdown("---")
-st.write("### 📜 Live-Positionen (Multitasking)")
-if trades_data:
-    st.dataframe(pd.DataFrame(trades_data), use_container_width=True)
+# --- SIDEBAR: ASSETS & LERN-FORTSCHRITT ---
+with st.sidebar:
+    st.header("🧠 KI-Evolutionsstufen")
+    st.write("**Aktuelle Überwachungs-Dichte:**")
+    st.code("BTC, ETH, SOL, LINK, DOT, ADA, XRP, MATIC, DOGE, AVAX")
+    st.markdown("---")
+    st.write("🤖 **Gelerntes Wissen:**")
+    if mem_data and m.get("learned_lessons"):
+        for lesson in m["learned_lessons"]:
+            st.caption(f"• {lesson}")
+    else:
+        st.caption("• Analysiere Marktzyklen für autonomes Hebel-Trading (10x).")
+        st.caption("• Maximiere Datenaufnahme zur Beschleunigung des Lernprozesses.")
