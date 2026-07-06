@@ -17,6 +17,11 @@ HEADERS = {
 # Knallharte Kraken-Gebührenstruktur
 KRAKEN_TAKER_FEE = 0.0026  # 0.26% Standard-Gebühr für Taker
 
+# NEU: Knallharte Risiko- und Budgetvorgaben des Masters
+MAX_TOTAL_BUDGET_USD = 200.0  # Maximales Gesamtbudget für alle aktiven Positionen zusammen
+POSITION_SIZE_USD = 50.0      # Größe pro Trade (Maximal 4 lukrative Trades gleichzeitig)
+FIXED_LEVERAGE = 10           # Immer 10x Hebel für maximalen Gewinnfokus
+
 def get_live_kraken_markets():
     """Holt das gesamte USDT-Handelsfeld live von Kraken"""
     try:
@@ -28,13 +33,24 @@ def get_live_kraken_markets():
         print(f"❌ API-Fehler bei Marktliste (Kraken): {e}")
         return ["XBTUSDT", "ETHUSDT", "SOLUSDT"]
 
+def get_current_used_budget():
+    """Prüft in der Datenbank, wie viel Margin aktuell in aktiven Trades gebunden ist"""
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/trade_history?status=eq.ACTIVE"
+        res = requests.get(url, headers=HEADERS).json()
+        if isinstance(res, list):
+            return sum(float(trade.get("margin_usd", 0)) for trade in res)
+        return 0.0
+    except Exception as e:
+        print(f"⚠️ Budget-Abfrage fehlgeschlagen: {e}")
+        return 999.0  # Sicherheitssperre, falls die DB nicht erreichbar ist
+
 def get_orderbook_and_atr(pair):
     """
     Analysiert das Live-Orderbuch und berechnet die Volatilität (ATR-Ersatz) 
     sowie den aktuellen Durchschnittspreis für exaktes Risikomanagement.
     """
     try:
-        # Depth liefert uns das Orderbuch, Ticker liefert uns die Tages-Spreads (High/Low) für die Volatilität
         url_depth = f"https://api.kraken.com/0/public/Depth?pair={pair}&count=20"
         url_ticker = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
         
@@ -54,12 +70,10 @@ def get_orderbook_and_atr(pair):
         best_ask = float(asks[0][0])
         live_price = (best_bid + best_ask) / 2
         
-        # Mathematische Orderbuchtiefe (Kauf- vs. Verkaufsdruck)
         total_bid_vol = sum(float(b[1]) for b in bids)
         total_ask_vol = sum(float(a[1]) for a in asks)
         orderbook_ratio = total_bid_vol / total_ask_vol if total_ask_vol > 0 else 1
         
-        # Volatilitätsberechnung anhand der Tages-Handelsspanne (High - Low)
         high_24h = float(pair_ticker.get("h", [live_price])[0])
         low_24h = float(pair_ticker.get("l", [live_price])[0])
         market_volatility = high_24h - low_24h
@@ -82,10 +96,9 @@ def get_advanced_metrics(asset_ticker):
         ticker = asset_ticker.replace("USDT", "").lower()
         if ticker == "xbt": ticker = "btc"
         
-        # Suche nach der exakten Coin-ID bei CoinGecko
         search_res = requests.get(f"https://api.coingecko.com/api/v3/search?query={ticker}", timeout=10).json()
         if not search_res.get("coins"):
-            return {"inflation_risk": "Low", "open_interest_trend": "Neutral", "tokens_to_release": 0}
+            return {"inflation_risk": "Low", "open_interest_trend": "Neutral", "tokens_to_release": 0, "released_p": 100}
             
         coin_id = search_res["coins"][0]["id"]
         coin_data = requests.get(f"https://api.coingecko.com/api/v3/coins/{coin_id}", timeout=10).json()
@@ -94,7 +107,6 @@ def get_advanced_metrics(asset_ticker):
         circulating = market_data.get("circulating_supply", 0)
         total_max = market_data.get("max_supply") or market_data.get("total_supply") or circulating
         
-        # 1. Token-Supply Berechnung (Zukünftige Freischaltungen werden berücksichtigt!)
         released_percentage = (circulating / total_max) * 100 if total_max > 0 else 100
         tokens_to_release = total_max - circulating
         
@@ -104,7 +116,6 @@ def get_advanced_metrics(asset_ticker):
         elif released_percentage < 80:
             inflation_risk = "MEDIUM"
             
-        # 2. Open Interest & Volumens-Trend ableiten
         vol_change_24h = market_data.get("total_volume", {}).get("usd", 0)
         market_cap = market_data.get("market_cap", {}).get("usd", 1)
         volume_to_mcap_ratio = vol_change_24h / market_cap
@@ -118,7 +129,6 @@ def get_advanced_metrics(asset_ticker):
             "open_interest_trend": oi_trend
         }
     except:
-        # Fallback bei API Rate-Limits von CoinGecko
         return {"released_p": 100.0, "tokens_to_release": 0, "inflation_risk": "Low", "open_interest_trend": "Stable"}
 
 def ask_gemini_expert(prompt_text):
@@ -136,46 +146,48 @@ def ask_gemini_expert(prompt_text):
 def run_unlimited_expert_trading():
     """Der Core-Prozess: Globaler Rundum-Scan mit maximaler mathematischer Tiefe"""
     try:
+        # NEU: Überprüfe die belegten finanziellen Mittel vor jedem Scan
+        current_allocated = get_current_used_budget()
+        print(f"💰 Risiko-Watch: {current_allocated}$ von {MAX_TOTAL_BUDGET_USD}$ belegt.")
+        
+        if current_allocated >= MAX_TOTAL_BUDGET_USD:
+            print("🛑 Maximale Budgetgrenze (200$) erreicht. Warte auf Positions-Schließungen.")
+            return
+
         # Unendliches Gedächtnis laden
         mem_res = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
         learned_context = ", ".join(mem_res[0].get("learned_lessons", [])) if mem_res else ""
 
-        # Ganzen Markt abrufen
         all_pairs = get_live_kraken_markets()
         print(f"🧠 MAXIMUM-SCAN: Analysiere gesamten Markt ({len(all_pairs)} Assets) auf Profi-Ebene...")
 
-        for pair in all_pairs[:20]: # Die vordersten 20 Märkte im permanenten Tiefenscan
+        for pair in all_pairs[:20]:
+            # Nochmalige Prüfung im Loop, falls gerade ein Trade eröffnet wurde
+            if get_current_used_budget() >= MAX_TOTAL_BUDGET_USD:
+                break
+                
             market_stats = get_orderbook_and_atr(pair)
             if not market_stats:
                 continue
                 
-            # Filter 1: Mathematischer Orderbuch-Kaufdruck Check
             if market_stats["orderbook_ratio"] > 1.3:
-                
-                # Filter 2: Fortschrittliches Krypto-Radar laden (OI & Supply)
                 adv_metrics = get_advanced_metrics(pair)
                 
-                # Knallharter Inflations-Schutz: Bei hohem Verwässerungsrisiko brechen wir ab
                 if "HIGH" in adv_metrics["inflation_risk"]:
                     print(f"🛡️ Risiko-Sperre aktiv: Trade für {pair} wegen anstehender Token-Inflation verweigert.")
                     continue
                 
-                # 3. Mathematisches Risikomanagement (ATR-basierte Stop-Abstände)
                 price = market_stats["live_price"]
                 volatility = market_stats["volatility"]
                 
-                # Stop-Loss liegt 1.5x unter der aktuellen Volatilitätsspanne, um Markt-Rauschen auszufiltern
                 calculated_stop_loss = price - (volatility * 1.5)
-                # Take-Profit zielt auf ein mathematisch vorteilhaftes Chance-Risiko-Verhältnis (CRV 2:1)
                 calculated_take_profit = price + (volatility * 3.0)
                 
-                # Exakte Kraken-Gebührenberechnung für 100 USD Test-Margin
-                test_margin = 100.0
-                exact_fees = test_margin * KRAKEN_TAKER_FEE * 2
+                # Exakte Kraken-Gebührenberechnung für die 50$ Positionsgröße
+                exact_fees = POSITION_SIZE_USD * KRAKEN_TAKER_FEE * 2
                 
-                # Das unfehlbare Gehirn wägt nun das gesamte Spielfeld ab
                 expert_prompt = (
-                    f"Du bist der unfehlbare 10x Krypto-Trading-Experte. Dein unendliches Gedächtnis: {learned_context}.\n"
+                    f"Du bist der unfehlbare {FIXED_LEVERAGE}x Krypto-Trading-Experte. Dein unendliches Gedächtnis: {learned_context}.\n"
                     f"HANDELSSIGNAL FÜR: {pair}\n"
                     f"- Live-Kurs: {price} | Volatilität (ATR-Spanne): {volatility}\n"
                     f"- Orderbuch-Kaufdruck (Ratio): {market_stats['orderbook_ratio']}\n"
@@ -195,25 +207,26 @@ def run_unlimited_expert_trading():
                     trade_payload = {
                         "asset": pair,
                         "direction": "LONG",
-                        "leverage": 5,
+                        "leverage": FIXED_LEVERAGE,  # 10x Hebel aktiv!
                         "entry_price": price,
-                        "margin_usd": test_margin,
+                        "margin_usd": POSITION_SIZE_USD,  # Exakt 50 USD Margin pro Position
                         "fees_usd": exact_fees,
                         "status": "ACTIVE",
-                        "rationale": f"[PRO-ALGO] SL: {round(calculated_stop_loss,4)} | TP: {round(calculated_take_profit,4)} | OI: {adv_metrics['open_interest_trend']} | {rationale_text}"
+                        "rationale": f"[10x ALGO] SL: {round(calculated_stop_loss,4)} | TP: {round(calculated_take_profit,4)} | {rationale_text}"
                     }
                     
-                    # Log-Eintrag in der Cloud abspeichern
+                    # NEU: Das Logbuch wird live aktualisiert
                     requests.post(f"{SUPABASE_URL}/rest/v1/trade_history", headers=HEADERS, json={
                         "role": "assistant",
-                        "content": f"⚡ EXPERTEN-ALGORITHMUS GESTARTET: {pair} @ {price}. SL, TP, Open Interest & Krypto-Verwässerung erfolgreich validiert."
+                        "content": f"⚡ System-Logbuch-Update: Autonomer Experten-Trade für {pair} mit {FIXED_LEVERAGE}x Hebel gestartet!"
                     })
+                    
                     # Trade ausführen
                     requests.post(f"{SUPABASE_URL}/rest/v1/trade_history", headers=HEADERS, json=trade_payload)
-                    print(f"🔥 MAXIMALER EXPERTEN-TRADE ERÖFFNET: {pair}")
+                    print(f"🔥 MAXIMALER EXPERTEN-TRADE ERÖFFNET: {pair} mit 10x Hebel.")
                     break
                     
-            time.sleep(2) # API-Schonung
+            time.sleep(2)
             
     except Exception as e:
         print(f"Fehler im High-End-Trading-Loop: {e}")
