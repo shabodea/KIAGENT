@@ -31,8 +31,8 @@ def load_data():
 
 mem_data, trades_data, chat_data = load_data()
 
-# --- MATHEMATISCHE KOORDINATION DER STATISTIKEN (An deine echten Spalten angepasst) ---
-aktuelles_guthaben = 200.0  # Dein Startkapital als mathematische Basis
+# --- MATHEMATISCHE KOORDINATION DER STATISTIKEN ---
+aktuelles_guthaben = 200.0  
 all_time_gewinn = 0.0
 all_time_verlust = 0.0
 gesamtes_einsatz_volumen = 0.0
@@ -45,11 +45,9 @@ if isinstance(trades_data, list) and len(trades_data) > 0:
         pnl = float(t.get("net_pnl") or 0.0)
         marge = float(t.get("Marge in USD") or 0.0)
         
-        # 1. Nur das Volumen der aktuell AKTIVEN Trades addieren
         if status == "ACTIVE":
             gesamtes_einsatz_volumen += marge
             
-        # 2. Gewinne und Verluste aus geschlossenen Positionen verrechnen
         if status == "CLOSED":
             if pnl > 0:
                 all_time_gewinn += pnl
@@ -84,12 +82,12 @@ with left_col:
     else:
         st.info("Aktuell keine aktiven Trades in der Handelsgeschichte.")
 
-    # Logbuch-Bereich
+    # Logbuch-Bereich (JETZT DYNAMISCH AUF 50 COINS ANGEPASST)
     st.subheader("🖥️ 24/7 Agenten-Logbuch (Was er aktuell tut)")
     st.markdown(
         f"""<div class="log-box">
         [{datetime.now().strftime('%H:%M:%S')}] 🔍 Starte Scan auf 5M, 15M, 1H und 4H Zeitebenen...<br>
-        [{datetime.now().strftime('%H:%M:%S')}] ⚙️ Berechne RSI und EMA-Konfluenz für 12 Krypto-Assets...<br>
+        [{datetime.now().strftime('%H:%M:%S')}] ⚙️ Berechne RSI und EMA-Konfluenz für 50 Krypto-Assets...<br>
         [{datetime.now().strftime('%H:%M:%S')}] 🧠 Gemini-Gehirn analysiert Marktstimmung via Web-Auswertung...<br>
         [{datetime.now().strftime('%H:%M:%S')}] 💎 Evolution: Der Agent lernt aus den letzten 5 Trades.
         </div>""", 
@@ -99,10 +97,8 @@ with left_col:
 with right_col:
     st.subheader("💬 Interaktiver KI-Diskurs")
     
-    # Chat-Verlauf anzeigen
     chat_container = st.container(height=350)
     with chat_container:
-        # JETZT ABSICHERT: Verhindert den Fehler an Zeile 110, falls chat_data leer oder ungültig ist
         if isinstance(chat_data, list) and len(chat_data) > 0 and isinstance(chat_data[0], dict):
             for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0) if isinstance(x, dict) else 0):
                 with st.chat_message(msg["role"]):
@@ -110,7 +106,6 @@ with right_col:
         else:
             st.write("_Noch keine Nachrichten. Schreib deinem Agenten etwas!_")
 
-    # Chat-Eingabe (Injektion in deine Tabelle 'Chatnachrichten')
     if prompt := st.chat_input("Frag den Agenten nach seiner Begründung oder gib ihm Infos..."):
         with st.chat_message("user"):
             st.write(prompt)
