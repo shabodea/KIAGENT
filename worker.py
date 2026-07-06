@@ -24,6 +24,7 @@ def get_live_kraken_markets():
         url = "https://api.kraken.com/0/public/AssetPairs"
         res = requests.get(url, timeout=10).json()
         all_pairs = res.get("result", {})
+        # Filtert alle Paare, die auf USDT enden
         return [pair for pair in all_pairs.keys() if pair.endswith("USDT")]
     except:
         return ["XBTUSDT", "ETHUSDT", "SOLUSDT"]
@@ -54,10 +55,6 @@ def is_bot_paused():
         return False
 
 def check_and_close_trades():
-    """
-    Überwachungs-Maschine angepasst an deine exakten Supabase-Spaltennamen.
-    Berechnet PnL mit 10x Hebel und fordert im Chat Feedback, falls ein Fehler auftritt.
-    """
     try:
         url = f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?Status=eq.ACTIVE"
         active_trades = requests.get(url, headers=HEADERS).json()
@@ -68,7 +65,6 @@ def check_and_close_trades():
             pair = trade["Vermögenswert"]
             trade_id = trade.get("Ausweis")
             
-            # Live-Kurs von Kraken holen
             url_ticker = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
             res = requests.get(url_ticker, timeout=10).json()
             if "result" not in res: continue
@@ -76,8 +72,8 @@ def check_and_close_trades():
             current_price = (float(ticker_data["b"][0]) + float(ticker_data["a"][0])) / 2
             
             entry = float(trade.get("Eintrittspreis", current_price))
-            sl = entry * 0.985  # 1.5% Stop-Loss
-            tp = entry * 1.03   # 3.0% Take-Profit
+            sl = entry * 0.985  
+            tp = entry * 1.03   
             
             closed = False
             reason = ""
@@ -90,13 +86,11 @@ def check_and_close_trades():
                 reason = "TAKE-PROFIT"
                 
             if closed:
-                # Exakte Hebel-Gewinnberechnung (LONG)
                 price_change_p = (current_price - entry) / entry
                 realized_pnl = POSITION_SIZE_USD * price_change_p * FIXED_LEVERAGE
                 fees = float(trade.get("Gebühren_USD", 0))
                 final_pnl = round(realized_pnl - fees, 4)
 
-                # Update exakt in deine deutschen Tabellenspalten schießen!
                 requests.patch(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?Ausweis=eq.{trade_id}", headers=HEADERS, json={
                     "Status": "CLOSED",
                     "Ausstiegspreis": current_price,
@@ -104,7 +98,6 @@ def check_and_close_trades():
                     "Begründung": f"🔴 Geschlossen bei {round(current_price, 4)} via {reason}. Netto: {final_pnl}$"
                 })
                 
-                # Feedback-Schleife triggern bei Verlust
                 if final_pnl < 0:
                     feedback_prompt = (
                         f"Ein Trade für {pair} wurde im Stop-Loss beendet (Verlust: {final_pnl}$).\n"
@@ -119,7 +112,6 @@ def check_and_close_trades():
                         "role": "assistant",
                         "content": f"⚠️ **BOT-REFLXION NACH VERLUST:**\n\n{assistant_demand}\n\n*LEKTION: Meister, wir müssen den Code erweitern, um diesen Fehler künftig zu vermeiden.*"
                     })
-
                 print(f"🔴 Position geschlossen: {pair} | Net-PnL: {final_pnl}$")
     except Exception as e:
         print(f"Fehler bei Trade-Überwachung: {e}")
@@ -171,8 +163,10 @@ def run_unlimited_expert_trading():
         if current_allocated >= MAX_TOTAL_BUDGET_USD: return
 
         all_pairs = get_live_kraken_markets()
+        print(f"🧠 MAXIMUM-SCAN: Analysiere die Top-Märkte auf Profi-Ebene...")
 
-        for pair in all_pairs[:15]:
+        # JETZT ERWEITERT AUF DIE TOP 50 PARE
+        for pair in all_pairs[:50]:
             if is_bot_paused() or get_current_used_budget() >= MAX_TOTAL_BUDGET_USD: break
             market_stats = get_orderbook_and_atr(pair)
             if not market_stats: continue
@@ -188,7 +182,6 @@ def run_unlimited_expert_trading():
                 decision = ask_gemini_expert(expert_prompt)
                 
                 if "GO:" in decision:
-                    # Payload exakt auf deine deutschen Spalten ausgerichtet
                     trade_payload = {
                         "Vermögenswert": pair,
                         "Richtung": "LONG",
@@ -202,7 +195,7 @@ def run_unlimited_expert_trading():
                     requests.post(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS, json=trade_payload)
                     print(f"🟢 TRADE GEÖFFNET: {pair}")
                     break
-            time.sleep(2)
+            time.sleep(1.5) # Leicht verringertes Delay für schnellen Durchlauf der 50 Paare
     except Exception as e:
         print(f"Fehler im Trading-Loop: {e}")
 
