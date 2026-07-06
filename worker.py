@@ -14,12 +14,12 @@ HEADERS = {
 }
 
 def ask_gemini(prompt_text):
-    """Verbindet den Server direkt mit dem kostenlosen Gemini-1.5-Flash Gehirn"""
+    """Verbindet den Server direkt mit dem aktuellen, kostenfreien Gemini-3.1-Flash-Lite"""
     if not GEMINI_API_KEY:
         return "⚠️ Fehler: Kein GEMINI_API_KEY auf Render in den Environment Variables gefunden!"
         
-    # JETZT: Das echte, im Free-Tier voll unterstützte Modell über die v1-Schnittstelle
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    # JETZT RICHTIG: Die v1-Schnittstelle mit der aktuellen Generation 3.1
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
     
     payload = {
         "contents": [{"parts": [{"text": prompt_text}]}]
@@ -48,7 +48,7 @@ def process_chat_and_learning():
                 print(f"📥 Neuer Input empfangen: '{user_input}'")
                 
                 system_context = (
-                    "Du bist der autonome 10x Krypto-Trading-Agent. Du filterst das Wissen, das dir dein "
+                    "Du bist der autonome Krypto-Trading-Agent. Du filterst das Wissen, das dir dein "
                     "Master gibt, ab, lernst daraus für deine künftigen Strategien und antwortest hochprofessionell, "
                     "präzise und interaktiv auf Deutsch. Formuliere am Ende deiner Antwort immer eine ultrakurze Kern-Lektion (max. 1 Satz), "
                     "die mit 'LEKTION:' beginnt."
