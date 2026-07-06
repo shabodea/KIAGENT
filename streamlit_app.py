@@ -7,7 +7,7 @@ SUPABASE_URL = "https://swyjycklcbcfhiafibar.supabase.co"
 SUPABASE_KEY = "sb_publishable_e4pYpgdnhEEsN3iEZ6rghQ_M7IGgrl4"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
-st.set_page_config(page_title="🦅 KI-Broker Zentrale", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🦅 KI-Zentrale 10x", layout="wide", initial_sidebar_state="expanded")
 
 # --- CUSTOM CSS FÜR FORMATIERUNG ---
 st.markdown("""
@@ -34,7 +34,7 @@ def get_all_data():
 
 trades, chat, risiko = get_all_data()
 
-# --- MATHEMATISCHE AUSWERTUNG (SÄULE: SELBSTBEWERTUNG) ---
+# --- MATHEMATISCHE AUSWERTUNG ---
 guthaben = 200.0
 win_trades = 0
 loss_trades = 0
@@ -80,7 +80,7 @@ with col_left:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Einstiegspreis", f"${pos.get('Eintrittspreis')}")
                 c2.metric("Marge (Einsatz)", f"${pos.get('Marge in USD')}", help="Dynamisch berechnet anhand der ATR-Volatilität.")
-                c3.metric("Hebel", f"{pos.get('Hebelwirkung')}x")
+                c3.metric("Havel", f"{pos.get('Hebelwirkung')}x")
                 
                 st.markdown(f"**🎯 Take-Profit Ziel:** {pos.get('Take_Profit_Preis')}$ | **🛡️ Stop-Loss Schutz:** {pos.get('Stop_Loss_Preis')}$")
                 st.info(f"ℹ️ **Einfache Erklärung des Handelsmusters:**\nDer Bot hat den 15-Minuten-Chart analysiert. Da der Kurs über dem Durchschnitt (EMA) lag und die Gemini-Internetrecherche ein bullisches Sentiment ergab, wurde diese Position eröffnet.")
@@ -94,7 +94,6 @@ with col_left:
         if "net_pnl" in df.columns:
             st.dataframe(df[["Vermögenswert", "Richtung", "Eintrittspreis", "net_pnl", "Status"]].sort_index(ascending=False), use_container_width=True)
 
-    # Das funktionierende Logbuch
     st.subheader("🖥️ Telemetrie-Protokoll")
     st.markdown(f"""<div class="log-box">
         [{datetime.now().strftime('%H:%M:%S')}] 📡 CCXT-Daten-Pipeline zu Kraken steht.<br>
@@ -104,17 +103,48 @@ with col_left:
 
 with col_right:
     st.subheader("💬 Taktischer Live-Diskurs")
-    chat_container = st.container(height=350)
+    chat_container = st.container(height=450) # Box vergrößert für bessere Übersicht
     with chat_container:
-        if isinstance(chat_data := chat, list) and len(chat_data) > 0:
-            for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0) if isinstance(x, dict) else 0):
+        if isinstance(chat, list) and len(chat) > 0:
+            for msg in sorted(chat, key=lambda x: x.get('Ausweis', 0) if isinstance(x, dict) else 0):
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
         else:
-            st.write("_Sende eine Nachricht an die Steuerung..._")
+            st.write("_Warte auf Eingabe..._")
 
-    if prompt := st.chat_input("Gib eine Anweisung ein..."):
-        with st.chat_message("user"): st.write(prompt)
-        requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "user", "content": prompt})
+st.markdown("---")
+
+# --- STRATEGISCHE BEFEHLSZEILE (Ganz unten für absolute Stabilität) ---
+st.subheader("⌨️ Taktische Befehlszeile")
+if prompt := st.chat_input("Gib dem Broker eine Anweisung oder frage nach Markt-Sentiment..."):
+    # POST-Request absetzen
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/Chatnachrichten", 
+            headers=HEADERS, 
+            json={"role": "user", "content": prompt}
+        )
         st.cache_data.clear()
         st.rerun()
+    except Exception as e:
+        st.error(f"Fehler beim Senden: {str(e)}")
+
+# --- SIDEBAR: REALE SYSTEM-EVOLUTION ---
+with st.sidebar:
+    st.header("🧠 KI-Gedächtnis (Dauerspeicher)")
+    st.write("Abgesicherte Regeln aus Verlust-Analysen:")
+    
+    # Versuche bot_memory zu laden, falls vorhanden
+    try:
+        mem = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
+        if mem and isinstance(mem, list) and len(mem) > 0:
+            lessons = mem[0].get("learned_lessons", [])
+            if isinstance(lessons, list) and len(lessons) > 0:
+                for lesson in lessons:
+                    st.caption(f"🛡️ {lesson}")
+            else:
+                st.caption("• Noch keine Verluste aufgezeichnet. System im fehlerfreien Zustand.")
+        else:
+            st.caption("• Verbinde mit Gedächtnis-Speicher...")
+    except:
+        st.caption("• Keine Verbindung zum Gedächtnis.")
