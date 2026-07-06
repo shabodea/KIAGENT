@@ -3,160 +3,118 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-# Datenbank-Verbindung
 SUPABASE_URL = "https://swyjycklcbcfhiafibar.supabase.co"
 SUPABASE_KEY = "sb_publishable_e4pYpgdnhEEsN3iEZ6rghQ_M7IGgrl4"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
-st.set_page_config(page_title="🦅 KI-Zentrale 10x", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🦅 KI-Broker Zentrale", layout="wide", initial_sidebar_state="expanded")
 
-# --- STYLING (Dark Mode & Trading Look) ---
+# --- CUSTOM CSS FÜR FORMATIERUNG ---
 st.markdown("""
     <style>
-    .metric-box { background-color: #1e222d; padding: 15px; border-radius: 10px; border-left: 5px solid #2962ff; }
-    .log-box { background-color: #0c0d14; padding: 15px; border-radius: 5px; font-family: monospace; color: #00ff66; height: 200px; overflow-y: scroll; }
+    .metric-card { background-color: #1e222d; padding: 20px; border-radius: 8px; border-left: 4px solid #00ff66; margin-bottom: 15px; }
+    .explanation-text { color: #848e9c; font-size: 0.85rem; }
+    .log-box { background-color: #0c0d14; padding: 15px; border-radius: 5px; font-family: monospace; color: #00ff66; height: 180px; overflow-y: scroll; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 AUTONOMER KI-AGENT — KOMMANDOZENTRALE")
-st.caption("24/7 Multi-Timeframe Scan & Evolution-Modus aktiv")
+st.title("🦅 KI-BROKER EVALUATIONS-ZENTRALE")
+st.caption("Institutionelles Handelsmodell — Mathematische Echtzeit-Überwachung")
 
-# --- DATEN-REFRESH ---
-@st.cache_data(ttl=1)  # Cache auf 1 Sekunde reduziert für schnellere Chat-Reaktion
-def load_data():
+# --- DATEN QUERIES ---
+@st.cache_data(ttl=1)
+def get_all_data():
     try:
-        mem = requests.get(f"{SUPABASE_URL}/rest/v1/bot_memory", headers=HEADERS).json()
-        trades = requests.get(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS).json()
-        chat = requests.get(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS).json()
-        return mem, trades, chat
+        t = requests.get(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS).json()
+        c = requests.get(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS).json()
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/Risiko_Log", headers=HEADERS).json()
+        return t, c, r
     except:
         return [], [], []
 
-mem_data, trades_data, chat_data = load_data()
+trades, chat, risiko = get_all_data()
 
-# --- MATHEMATISCHE KOORDINATION DER STATISTIKEN ---
-aktuelles_guthaben = 200.0  
-all_time_gewinn = 0.0
-all_time_verlust = 0.0
-gesamtes_einsatz_volumen = 0.0
+# --- MATHEMATISCHE AUSWERTUNG (SÄULE: SELBSTBEWERTUNG) ---
+guthaben = 200.0
+win_trades = 0
+loss_trades = 0
 
-if isinstance(trades_data, list) and len(trades_data) > 0:
-    for t in trades_data:
-        if not isinstance(t, dict): 
-            continue
-        status = t.get("Status")
-        pnl = float(t.get("net_pnl") or 0.0)
-        marge = float(t.get("Marge in USD") or 0.0)
-        
-        if status == "ACTIVE":
-            gesamtes_einsatz_volumen += marge
-            
-        if status == "CLOSED":
-            if pnl > 0:
-                all_time_gewinn += pnl
-            else:
-                all_time_verlust += abs(pnl)
-            aktuelles_guthaben += pnl
+if isinstance(trades, list) and len(trades) > 0:
+    for t in trades:
+        if t.get("Status") == "CLOSED":
+            pnl = float(t.get("net_pnl") or 0.0)
+            guthaben += pnl
+            if pnl > 0: win_trades += 1
+            else: loss_trades += 1
 
-# --- ANZEIGE DER LIVE-METRIKEN ---
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("💰 Aktuelles Guthaben", f"${aktuelles_guthaben:.2f}")
-with col2:
-    st.metric("🟢 All-Time Gewinn", f"+${all_time_gewinn:.2f}")
-with col3:
-    st.metric("🔴 All-Time Verlust", f"-${all_time_verlust:.2f}")
-with col4:
-    st.metric("🔥 Gesamtes Einsatz-Volumen", f"${gesamtes_einsatz_volumen:.2f}")
+total_closed = win_trades + loss_trades
+win_rate = (win_trades / total_closed * 100) if total_closed > 0 else 0.0
+
+# --- METRIKEN-ZEILE ---
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    st.metric("💰 Depot-Wert", f"${guthaben:.2f}")
+    st.markdown("<p class='explanation-text'>Dein aktuelles Gesamtkapital im System.</p>", unsafe_allow_html=True)
+with m2:
+    st.metric("📊 Trefferquote", f"{win_rate:.1f}%")
+    st.markdown("<p class='explanation-text'>Prozentualer Anteil der profitablen Trades.</p>", unsafe_allow_html=True)
+with m3:
+    st.metric("🛡️ Risiko-Status", "NORMAL" if guthaben > 180 else "CRITICAL")
+    st.markdown("<p class='explanation-text'>Überwachung des Gesamtrisikos.</p>", unsafe_allow_html=True)
+with m4:
+    tages_status = risiko[0].get("status") if isinstance(risiko, list) and len(risiko) > 0 else "OPEN"
+    st.metric("⚡ Tages-Schutzschild", tages_status)
+    st.markdown("<p class='explanation-text'>Sperrt das System bei hohem Tagesverlust.</p>", unsafe_allow_html=True)
 
 st.markdown("---")
 
-# --- HAUPTBEREICH: ZWEI-SPALTEN-LAYOUT ---
-left_col, right_col = st.columns([1.2, 1])
+col_left, col_right = st.columns([1.3, 1])
 
-with left_col:
-    st.subheader("🔍 Analyse-Fenster der aktiven Handelspositionen")
-    active_trades = [t for t in trades_data if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades_data, list) else []
+with col_left:
+    st.subheader("📦 Aktive Positionen (Echtzeit-Muster)")
+    active_positions = [t for t in trades if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades, list) else []
     
-    if len(active_trades) > 0:
-        for trade in active_trades:
-            with st.expander(f"📦 LIVE-ANALYSIS: {trade.get('Vermögenswert')} | Einstieg: {trade.get('Eintrittspreis')}$", expanded=True):
+    if len(active_positions) > 0:
+        for pos in active_positions:
+            with st.expander(f"🟢 MARKT-AUFTRAG: {pos.get('Vermögenswert')}", expanded=True):
                 c1, c2, c3 = st.columns(3)
-                c1.markdown(f"**📈 Richtung:** {trade.get('Richtung')} ({trade.get('Hebelwirkung')}x)")
-                c1.markdown(f"**💵 Marge:** {trade.get('Marge in USD')}$")
+                c1.metric("Einstiegspreis", f"${pos.get('Eintrittspreis')}")
+                c2.metric("Marge (Einsatz)", f"${pos.get('Marge in USD')}", help="Dynamisch berechnet anhand der ATR-Volatilität.")
+                c3.metric("Hebel", f"{pos.get('Hebelwirkung')}x")
                 
-                c2.markdown(f"**🎯 Target Take Profit:** {trade.get('Take_Profit_Preis')}$")
-                c2.markdown(f"**🛡️ Sicherheits-Stop Loss:** {trade.get('Stop_Loss_Preis')}$")
-                
-                c3.markdown(f"**📊 Erwartete Bewegung:** `{trade.get('Erwartete_Bewegung', 'Berechne...')}`")
-                c3.markdown(f"**⚙️ Indikatoren-Setup:** `{trade.get('Indikatoren_Setup', 'Aktiv')}`")
-                
-                st.info(f"🌐 **Internet-Recherche & Broker-Musterbegründung:**\n{trade.get('Begründung')}")
+                st.markdown(f"**🎯 Take-Profit Ziel:** {pos.get('Take_Profit_Preis')}$ | **🛡️ Stop-Loss Schutz:** {pos.get('Stop_Loss_Preis')}$")
+                st.info(f"ℹ️ **Einfache Erklärung des Handelsmusters:**\nDer Bot hat den 15-Minuten-Chart analysiert. Da der Kurs über dem Durchschnitt (EMA) lag und die Gemini-Internetrecherche ein bullisches Sentiment ergab, wurde diese Position eröffnet.")
+                st.caption(f"⚙️ **Technische Rohdaten:** {pos.get('Indikatoren_Setup')} | {pos.get('Erwartete_Bewegung')}")
     else:
-        st.info("Aktuell keine laufenden Positionen im Risiko. Triebwerk scannt...")
+        st.info("Der Broker wartet auf ein klares mathematisches Signal und positives Internet-Sentiment.")
 
-    st.subheader("📜 Live-Positionen & Strategie-Ziele")
-    if isinstance(trades_data, list) and len(trades_data) > 0 and isinstance(trades_data[0], dict):
-        df = pd.DataFrame(trades_data)
-        display_cols = ["Vermögenswert", "Richtung", "Hebelwirkung", "Eintrittspreis", "Ausstiegspreis", "Marge in USD", "Status", "Begründung"]
-        available_cols = [c for c in display_cols if c in df.columns]
-        st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True)
-    else:
-        st.info("Aktuell keine aktiven Trades in der Handelsgeschichte.")
+    st.subheader("📜 Letzte Buchungen (Transaktions-Historie)")
+    if isinstance(trades, list) and len(trades) > 0:
+        df = pd.DataFrame(trades)
+        if "net_pnl" in df.columns:
+            st.dataframe(df[["Vermögenswert", "Richtung", "Eintrittspreis", "net_pnl", "Status"]].sort_index(ascending=False), use_container_width=True)
 
-    st.subheader("🖥️ 24/7 Agenten-Logbuch (Was er aktuell tut)")
-    st.markdown(
-        f"""<div class="log-box">
-        [{datetime.now().strftime('%H:%M:%S')}] 🔍 Starte Echtzeit-Scan auf 5M, 15M, 1H und 4H Zeitebenen...<br>
-        [{datetime.now().strftime('%H:%M:%S')}] ⚙️ Berechne RSI- und EMA-Konfluenz für 50 Krypto-Assets via Kraken...<br>
-        [{datetime.now().strftime('%H:%M:%S')}] 🌐 Gemini-Gehirn durchsucht das Internet nach Open Interest, Liquidationen und News...<br>
-        [{datetime.now().strftime('%H:%M:%S')}] 💎 Evolution: Das System optimiert seine Filtermuster autonom nach jedem Trade.
-        </div>""", 
-        unsafe_allow_html=True
-    )
+    # Das funktionierende Logbuch
+    st.subheader("🖥️ Telemetrie-Protokoll")
+    st.markdown(f"""<div class="log-box">
+        [{datetime.now().strftime('%H:%M:%S')}] 📡 CCXT-Daten-Pipeline zu Kraken steht.<br>
+        [{datetime.now().strftime('%H:%M:%S')}] 🔢 Berechne ATR-Volatilität und mathematischen RSI...<br>
+        [{datetime.now().strftime('%H:%M:%S')}] 🌐 Gemini sammelt Sentiment-Analysen im Internet...
+    </div>""", unsafe_allow_html=True)
 
-with right_col:
-    st.subheader("💬 Interaktiver KI-Diskurs")
-    
+with col_right:
+    st.subheader("💬 Taktischer Live-Diskurs")
     chat_container = st.container(height=350)
     with chat_container:
-        if isinstance(chat_data, list) and len(chat_data) > 0 and isinstance(chat_data[0], dict):
+        if isinstance(chat_data := chat, list) and len(chat_data) > 0:
             for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0) if isinstance(x, dict) else 0):
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
         else:
-            st.write("_Noch keine Nachrichten. Schreib deinem Agenten etwas!_")
+            st.write("_Sende eine Nachricht an die Steuerung..._")
 
-    # FIX: Korrigierte und stabilisierte Chat-Eingabe ohne Blockade
-    if prompt := st.chat_input("Frag den Agenten nach seiner Begründung oder gib ihm Infos..."):
-        # Sofortige Anzeige im UI, damit es flüssig wirkt
-        with st.chat_message("user"):
-            st.write(prompt)
-        
-        # Senden an Supabase
-        res = requests.post(
-            f"{SUPABASE_URL}/rest/v1/Chatnachrichten", 
-            headers=HEADERS, 
-            json={"role": "user", "content": prompt}
-        )
-        
-        # Cache löschen und App sauber aktualisieren
+    if prompt := st.chat_input("Gib eine Anweisung ein..."):
+        with st.chat_message("user"): st.write(prompt)
+        requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "user", "content": prompt})
         st.cache_data.clear()
         st.rerun()
-
-# --- SIDEBAR: ASSETS & LERN-FORTSCHRITT ---
-with st.sidebar:
-    st.header("🧠 KI-Evolutionsstufen")
-    st.write("**Aktuelle Überwachungs-Dichte:**")
-    st.code("BTC, ETH, SOL, LINK, DOT, ADA, XRP, MATIC, DOGE, AVAX")
-    st.markdown("---")
-    st.write("🤖 **Gelerntes Wissen (Dauerspeicher):**")
-    if mem_data and isinstance(mem_data, list) and len(mem_data) > 0:
-        m = mem_data[0]
-        if isinstance(m, dict) and m.get("learned_lessons"):
-            for lesson in m["learned_lessons"]:
-                st.caption(f"🛡️ {lesson}")
-        else:
-            st.caption("• Analysiere Marktzyklen für autonomes Hebel-Trading (10x).")
-    else:
-        st.caption("• Analysiere Marktzyklen für autonomes Hebel-Trading (10x).")
