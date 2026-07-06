@@ -120,6 +120,9 @@ with st.sidebar:
 
 trades, chat, risiko = get_all_data_live()  # <--- HIER liegt der Fehler!
 
+
+trades, chat, risiko = get_all_data_live()  # <--- HIER liegt der Fehler!
+
 # --- MATHEMATISCHE AUSWERTUNG ---
 guthaben = 200.0
 win_trades = 0
