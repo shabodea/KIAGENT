@@ -35,14 +35,11 @@ def calculate_market_metrics(pair):
         data_points = list(res["result"].values())[0]
         closes = [float(x[4]) for x in data_points[-50:]]
         
-        # EMA 20
         ema20 = sum(closes[-20:]) / 20
-        # Volatilität (ATR-Ersatz via High-Low-Spanne)
         highs = [float(x[2]) for x in data_points[-14:]]
         lows = [float(x[3]) for x in data_points[-14:]]
         expected_move_p = round(((max(highs) - min(lows)) / min(lows)) * 100, 2)
 
-        # RSI 14
         gains, losses = [], []
         for i in range(1, len(closes)):
             diff = closes[i] - closes[i-1]
@@ -57,19 +54,60 @@ def calculate_market_metrics(pair):
         return None
 
 def fetch_ai_market_research(pair, price, rsi):
-    """Zwingt die KI zu einer tiefen Internet-Recherche über Open Interest, Volatilität und Trends"""
     prompt = (
         f"Führe eine professionelle Krypto-Marktanalyse durch für {pair} beim aktuellen Kurs von {price}$. "
-        f"Der mathematische RSI liegt bei {rsi}. Suche im Internet nach Faktoren wie Open Interest Veränderungen, "
-        f"jüngsten Kerzenmustern (Candlestick Analysis), Orderbuch-Wänden und Krypto-News. "
-        f"Entscheide, ob ein 10x gehebelter LONG-Einstieg mathematisch Sinn macht.\n\n"
-        f"Antworte STRENG im folgenden Format (ohne Abweichung):\n"
+        f"Der mathematische RSI liegt bei {rsi}. Nutze deine Echtzeit-Websuche und suche im Internet nach Faktoren wie Open Interest Veränderungen, "
+        f"Kerzenmustern, Orderbuch-Liquidität und Krypto-News. Entscheide, ob ein 10x LONG-Einstieg Sinn macht.\n\n"
+        f"Antworte exakt in diesem Format:\n"
         f"ENTSCHEIDUNG: [GO oder HOLD]\n"
-        f"BEGRÜNDUNG: [Deine fundamentale und technische Analyse aus dem Internet]\n"
-        f"ERWARTETE_BEWEGUNG: [Schätzung in % z.B. 4.5%]\n"
+        f"BEGRÜNDUNG: [Deine fundamentale Analyse aus dem Web]\n"
+        f"ERWARTETE_BEWEGUNG: [Schätzung in % z.B. 3.8%]\n"
         f"TARGETS: TP=[Wert] SL=[Wert]"
     )
     return ask_gemini_expert(prompt)
+
+def check_and_close_trades():
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?Status=eq.ACTIVE"
+        active_trades = requests.get(url, headers=HEADERS).json()
+        if not isinstance(active_trades, list) or len(active_trades) == 0: return
+
+        for trade in active_trades:
+            pair = trade.get("Vermögenswert")
+            trade_id = trade.get("Ausweis")
+            if not pair: continue
+            
+            metrics = calculate_market_metrics(pair)
+            if not metrics: continue
+            current_price = metrics["live_price"]
+            
+            # Liest die spezifischen TP/SL Preise aus, die beim Einstieg definiert wurden
+            tp = float(trade.get("Take_Profit_Preis") or (float(trade.get("Eintrittspreis")) * 1.03))
+            sl = float(trade.get("Stop_Loss_Preis") or (float(trade.get("Eintrittspreis")) * 0.985))
+            
+            closed = False
+            reason = ""
+            if current_price <= sl:
+                closed = True
+                reason = "STOP-LOSS"
+            elif current_price >= tp:
+                closed = True
+                reason = "TAKE-PROFIT"
+                
+            if closed:
+                price_change_p = (current_price - float(trade.get("Eintrittspreis"))) / float(trade.get("Eintrittspreis"))
+                realized_pnl = POSITION_SIZE_USD * price_change_p * FIXED_LEVERAGE
+                fees = float(trade.get("Gebühren_USD", 0))
+                final_pnl = round(realized_pnl - fees, 4)
+
+                requests.patch(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?Ausweis=eq.{trade_id}", headers=HEADERS, json={
+                    "Status": "CLOSED",
+                    "Ausstiegspreis": current_price,
+                    "net_pnl": final_pnl,
+                    "Begründung": f"🔴 Geschlossen bei {current_price}$ via {reason}. Net-PnL: {final_pnl}$"
+                })
+    except Exception as e:
+        print(f"Fehler Schließung: {e}")
 
 def run_unlimited_expert_trading():
     try:
@@ -82,18 +120,15 @@ def run_unlimited_expert_trading():
             metrics = calculate_market_metrics(pair)
             if not metrics or metrics["rsi"] > 65: continue
 
-            # Deep Research starten
             analysis = fetch_ai_market_research(pair, metrics["live_price"], metrics["rsi"])
             
             if "ENTSCHEIDUNG: GO" in analysis:
                 try:
-                    # Extrahiere die strukturierten KI-Daten
                     lines = analysis.split("\n")
                     rationale = [l for l in lines if "BEGRÜNDUNG:" in l][0].replace("BEGRÜNDUNG:", "").strip()
                     exp_move = [l for l in lines if "ERWARTETE_BEWEGUNG:" in l][0].replace("ERWARTETE_BEWEGUNG:", "").strip()
                     targets = [l for l in lines if "TARGETS:" in l][0].replace("TARGETS:", "").strip()
                     
-                    # Berechne präzise TP/SL Werte aus der KI-Vorgabe oder mathematisch
                     entry = metrics["live_price"]
                     tp_price = entry * 1.03
                     sl_price = entry * 0.985
@@ -118,8 +153,8 @@ def run_unlimited_expert_trading():
                         "Stop_Loss_Preis": sl_price
                     })
                     break
-                except Exception as e:
-                    print(f"Fehler beim Parsen der KI-Suche: {e}")
+                except:
+                    pass
             time.sleep(1)
     except Exception as e:
         print(f"Fehler Loop: {e}")
@@ -128,12 +163,25 @@ def ask_gemini_expert(prompt_text):
     if not GEMINI_API_KEY: return "HOLD"
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
     try:
-        # Der Model-Aufruf nutzt das integrierte Websuche-Verhalten von Gemini, wenn nach Web-Inhalten gefragt wird
         response = requests.post(url, json={"contents": [{"parts": [{"text": prompt_text}]}]}, timeout=15)
         return response.json()['candidates'][0]['content']['parts'][0]['text']
     except: return "HOLD"
 
+def process_chat():
+    try:
+        messages = requests.get(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS).json()
+        if messages and len(messages) > 0:
+            latest_msg = sorted(messages, key=lambda x: x.get('Ausweis', 0))[-1]
+            if latest_msg["role"] == "user":
+                user_input = latest_msg["content"]
+                system_context = "Du bist der unfehlbare Krypto-Trading-Experte. Antworte kurz auf Deutsch. Beende mit LEKTION: ..."
+                bot_response = ask_gemini_expert(f"{system_context}\n\nMaster schreibt: {user_input}")
+                requests.post(f"{SUPABASE_URL}/rest/v1/Chatnachrichten", headers=HEADERS, json={"role": "assistant", "content": bot_response})
+    except Exception as e: print(f"Fehler im Chat: {e}")
+
+# --- HAUPTLOOP ---
 while True:
-    # (check_and_close_trades bleibt identisch zur Vorversion, gleicht nun aber gegen die echten Spalten ab)
+    process_chat()
+    check_and_close_trades() 
     run_unlimited_expert_trading()
-    time.sleep(10)
+    time.sleep(15)
