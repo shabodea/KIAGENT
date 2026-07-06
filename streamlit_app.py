@@ -39,7 +39,6 @@ gesamtes_einsatz_volumen = 0.0
 
 if isinstance(trades_data, list) and len(trades_data) > 0:
     for t in trades_data:
-        # Falls ein fehlerhafter Eintrag (z.B. ein String statt Dictionary) reinkommt, überspringen
         if not isinstance(t, dict): 
             continue
         status = t.get("Status")
@@ -77,10 +76,8 @@ left_col, right_col = st.columns([1.2, 1])
 with left_col:
     st.subheader("📜 Live-Positionen & Strategie-Ziele")
     
-    # JETZT ABSICHERT: Verhindert den Pandas-ValueError, falls die Tabelle temporär leer ist
     if isinstance(trades_data, list) and len(trades_data) > 0 and isinstance(trades_data[0], dict):
         df = pd.DataFrame(trades_data)
-        # Relevante Spalten filtern basierend auf deinen echten deutschen Spaltennamen
         display_cols = ["Vermögenswert", "Richtung", "Hebelwirkung", "Eintrittspreis", "Ausstiegspreis", "Marge in USD", "Status", "Begründung"]
         available_cols = [c for c in display_cols if c in df.columns]
         st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True)
@@ -105,9 +102,9 @@ with right_col:
     # Chat-Verlauf anzeigen
     chat_container = st.container(height=350)
     with chat_container:
-        if chat_data:
-            # Sortiert nach deinem Spaltennamen 'Ausweis' (deine ID)
-            for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0)):
+        # JETZT ABSICHERT: Verhindert den Fehler an Zeile 110, falls chat_data leer oder ungültig ist
+        if isinstance(chat_data, list) and len(chat_data) > 0 and isinstance(chat_data[0], dict):
+            for msg in sorted(chat_data, key=lambda x: x.get('Ausweis', 0) if isinstance(x, dict) else 0):
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
         else:
@@ -130,7 +127,7 @@ with st.sidebar:
     st.write("🤖 **Gelerntes Wissen:**")
     if mem_data and isinstance(mem_data, list) and len(mem_data) > 0:
         m = mem_data[0]
-        if m.get("learned_lessons"):
+        if isinstance(m, dict) and m.get("learned_lessons"):
             for lesson in m["learned_lessons"]:
                 st.caption(f"• {lesson}")
         else:
