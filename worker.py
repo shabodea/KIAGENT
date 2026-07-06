@@ -18,10 +18,9 @@ def ask_gemini(prompt_text):
     if not GEMINI_API_KEY:
         return "⚠️ Fehler: Kein GEMINI_API_KEY auf Render in den Environment Variables gefunden!"
         
-    # Optimierte, stabile API-URL für das aktuellste Modell
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    # FIX: Wechsel auf die stabile v1-URL, die das Flash-Modell garantiert unterstützt
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
     
-    # Exakte JSON-Struktur, die Google verlangt
     payload = {
         "contents": [{
             "parts": [{
@@ -34,13 +33,11 @@ def ask_gemini(prompt_text):
         response = requests.post(url, json=payload, timeout=15)
         res_json = response.json()
         
-        # Falls Google einen Fehlercode zurückliefert
         if "error" in res_json:
             return f"❌ Gemini-API Fehler: {res_json['error'].get('message', 'Unbekannter API-Fehler')}"
             
         return res_json['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        # Gibt im Dashboard genau aus, was schiefgelaufen ist (z.B. Netzwerk oder Format)
         return f"Ausfall im KI-Kortex: {str(e)} | Response-Vorschau: {str(response.text)[:100]}"
 
 def process_chat_and_learning():
@@ -55,12 +52,6 @@ def process_chat_and_learning():
             if latest_msg["role"] == "user":
                 user_input = latest_msg["content"]
                 print(f"📥 Neuer Input empfangen: '{user_input}'")
-                
-                # Dem Bot temporär eine "Antwortet..." Nachricht verpassen, damit du siehst, dass er arbeitet
-                requests.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS, json={
-                    "role": "assistant",
-                    "content": "🤖 *Überlege...*"
-                })
                 
                 system_context = (
                     "Du bist der autonome 10x Krypto-Trading-Agent. Du filterst das Wissen, das dir dein "
@@ -104,4 +95,4 @@ print("🦅 Die voll funktionsfähige KI-Maschine läuft jetzt 24/7...")
 
 while True:
     process_chat_and_learning()
-    time.sleep(4)  # Alle 4 Sekunden prüfen, schont das API-Limit
+    time.sleep(4)
