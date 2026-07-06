@@ -14,19 +14,15 @@ HEADERS = {
 }
 
 def ask_gemini(prompt_text):
-    """Verbindet den Server direkt mit dem echten Google-Gemini-Gehirn"""
+    """Verbindet den Server direkt mit der aktuellsten Gemini-Pro-Generation"""
     if not GEMINI_API_KEY:
         return "⚠️ Fehler: Kein GEMINI_API_KEY auf Render in den Environment Variables gefunden!"
         
-    # FIX: Wechsel auf die stabile v1-URL, die das Flash-Modell garantiert unterstützt
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    # AKTUALISIERT: Absolut zukunftssichere v1-URL mit dem modernsten Pro-Modell
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent?key={GEMINI_API_KEY.strip()}"
     
     payload = {
-        "contents": [{
-            "parts": [{
-                "text": prompt_text
-            }]
-        }]
+        "contents": [{"parts": [{"text": prompt_text}]}]
     }
     
     try:
@@ -41,38 +37,32 @@ def ask_gemini(prompt_text):
         return f"Ausfall im KI-Kortex: {str(e)} | Response-Vorschau: {str(response.text)[:100]}"
 
 def process_chat_and_learning():
-    """Liest deine Chat-Nachrichten, antwortet via Gemini und speichert gelerntes Wissen"""
     try:
         messages = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS).json()
         
         if messages and len(messages) > 0:
             latest_msg = sorted(messages, key=lambda x: x.get('id', 0))[-1]
             
-            # Wenn die letzte Nachricht vom User kam, muss die KI antworten!
             if latest_msg["role"] == "user":
                 user_input = latest_msg["content"]
                 print(f"📥 Neuer Input empfangen: '{user_input}'")
                 
                 system_context = (
-                    "Du bist der autonome 10x Krypto-Trading-Agent. Du filterst das Wissen, das dir dein "
+                    "Du bist der autonome Krypto-Trading-Agent. Du filterst das Wissen, das dir dein "
                     "Master gibt, ab, lernst daraus für deine künftigen Strategien und antwortest hochprofessionell, "
                     "präzise und interaktiv auf Deutsch. Formuliere am Ende deiner Antwort immer eine ultrakurze Kern-Lektion (max. 1 Satz), "
                     "die mit 'LEKTION:' beginnt."
                 )
                 
                 full_prompt = f"{system_context}\n\nMaster schreibt: {user_input}"
-                
-                # Gemini berechnet die Antwort
                 bot_response = ask_gemini(full_prompt)
                 
-                # 1. Die echte Antwort in den Chat schreiben
                 requests.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=HEADERS, json={
                     "role": "assistant",
                     "content": bot_response
                 })
                 print("📤 Antwort erfolgreich im Chat gesendet!")
                 
-                # 2. Evolution: Extrahiere die Lektion und brenne sie ins unendliche Gedächtnis
                 if "LEKTION:" in bot_response:
                     lesson = bot_response.split("LEKTION:")[-1].strip()
                     
@@ -92,7 +82,6 @@ def process_chat_and_learning():
 
 # --- HAUPTPROGRAMM ---
 print("🦅 Die voll funktionsfähige KI-Maschine läuft jetzt 24/7...")
-
 while True:
     process_chat_and_learning()
     time.sleep(4)
