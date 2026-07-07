@@ -1,9 +1,9 @@
 
-
 import requests
 from datetime import datetime
-from config.settings import SUPABASE_URL, HEADERS
 
+# --- IMPORTE DIREKT AUS DEM CONFIG-ORDNER ---
+from config.settings import SUPABASE_URL, HEADERS
 def get_all_data_live():
     """
     Fragt alle 4 Haupttabellen synchron aus Supabase ab.
