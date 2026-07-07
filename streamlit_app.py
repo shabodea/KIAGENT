@@ -1,8 +1,15 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import sys
+import os
 
-# --- MODULARE IMPORTS (STRICT TO ARCHITECTURE) ---
+# --- WEGWEISER FÜR DIE DOPPELDEN/DEUTSCHEN ORDNER (FIX) ---
+ZENTRALER_PFAD = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(ZENTRALER_PFAD, "Datenbank"))
+sys.path.append(os.path.join(ZENTRALER_PFAD, "Konfiguration"))
+
+# --- MODULARE IMPORTS AUS DEN UNTERORDNERN ---
 from database.supabase import get_all_data_live, send_chat_message
 
 st.set_page_config(page_title="🦅 KI-Zentrale 10x", layout="wide", initial_sidebar_state="expanded")
