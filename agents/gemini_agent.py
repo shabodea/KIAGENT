@@ -12,8 +12,7 @@ from database.supabase import get_all_data_live, send_chat_message
 
 class GeminiCoreAgent:
     def __init__(self):
-        # HIER STEHT JETZT DEIN GEMINI 3.5
-        self.model = "gemini-3.5-pro" # Passe den String exakt so an, wie deine API ihn verlangt (z.B. gemini-3.5-pro)
+        self.model = "gemini-3.5-flash" 
         self.api_key = GEMINI_API_KEY
 
     def execute_thought_cycle(self, user_prompt):
