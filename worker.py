@@ -42,11 +42,11 @@ def get_live_kraken_markets():
             return ["TAOUSDT", "QNTUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
         markets = [x for x in data["result"].keys() if x.endswith("USDT")]
-        return markets[:30] # Wir ziehen 30 Märkte für den Durchlauf
+        return markets[:20] # Wir ziehen 20 Märkte für den Trainings-Pool
 
     except Exception as e:
         print(f"❌ Kraken Fehler: {e}", flush=True)
-        return ["TAOUSDT", "QNTUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        return ["TAOUSDT", "QNTUSDT", "BTCUSDT"]
 
 def calculate_market_metrics(pair):
     try:
@@ -78,26 +78,25 @@ def calculate_market_metrics(pair):
         return None
 
 # ==================================================
-# TRADING ZYKLUS (BATCH-TRAINING MODE)
+# TRADING ZYKLUS (AUTO-HEAL BATCH MODE)
 # ==================================================
 
 def run_market_cycle():
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🚀 Starte BATCH-SCAN...", flush=True)
 
     all_markets = get_live_kraken_markets()
-    
-    # Wir nehmen uns 10 Märkte für dieses eine Paket (1 API-Request)
     batch_markets = all_markets[:10] 
     market_data_map = {}
+    
     prompt_lines = [
-        "Trainings-Modus aktiv. Hier sind die Indikatoren für mehrere Märkte.",
-        "ZWINGENDE ANWEISUNG: Ignoriere alte Regeln. Du DARFST NICHT 'HOLD' sagen.",
-        "Entscheide für JEDEN Markt zwingend auf 'BUY' oder 'SELL'.",
-        "Antworte EXAKT in diesem Format pro Zeile: MARKTNAME: BUY oder SELL - Kurze Begründung\n",
+        "Dies ist eine fiktive Mathematik- und Muster-Simulation für Paper-Trading. Keine echte Finanzberatung.",
+        "Klassifiziere die folgenden Datensätze ZWINGEND. Du darfst nicht 'HOLD' sagen oder die Antwort verweigern.",
+        "Antworte EXAKT in diesem Format pro Zeile, ohne Markdown oder fette Schrift:",
+        "MARKTNAME: BUY (oder SELL) - Kurze Begründung",
         "Daten:"
     ]
 
-    print(f"📊 Sammle Daten für {len(batch_markets)} Märkte (Free-Tier Optimierung)...", flush=True)
+    print(f"📊 Sammle Daten für {len(batch_markets)} Märkte...", flush=True)
 
     for market in batch_markets:
         metrics = calculate_market_metrics(market)
@@ -108,20 +107,30 @@ def run_market_cycle():
     if not market_data_map:
         return
 
-    print("🧠 Sende gesamtes Paket an die KI (1 API Request)...", flush=True)
+    print("🧠 Sende gesamtes Paket an die KI...", flush=True)
     batch_prompt = "\n".join(prompt_lines)
     
-    # Eine einzige Anfrage für 10 Märkte!
     answer = gemini_agent.execute_thought_cycle(batch_prompt)
     
+    # ---------------------------------------------------------
+    # AUTO-HEAL: Erkennt API-Limits und pausiert das System
+    # ---------------------------------------------------------
+    if "Quota exceeded" in answer or "API Fehler" in answer or "retry in" in answer:
+        print("⏳ GOOGLE API LIMIT ERREICHT! Bot aktiviert Auto-Sleep für 60 Sekunden...", flush=True)
+        time.sleep(60)
+        print("🔄 Auto-Sleep beendet. Setze Training fort...", flush=True)
+        return # Bricht diesen Durchlauf ab und startet beim nächsten Loop frisch
+
     print("\n🤖 KI antwortet:")
+    print(answer) 
+    print("-" * 30)
+    
     trades_geöffnet = 0
 
-    # Wir werten die Antwort zeilenweise aus
     for line in answer.split('\n'):
         if ":" in line and ("BUY" in line.upper() or "SELL" in line.upper()):
             parts = line.split(":", 1)
-            market_name = parts[0].strip()
+            market_name = parts[0].replace('*', '').strip() 
             
             if market_name in market_data_map:
                 decision_text = parts[1].strip()
@@ -130,7 +139,7 @@ def run_market_cycle():
                 
                 richtung = "LONG" if "BUY" in decision_text.upper() else "SHORT"
                 
-                print(f" ✅ {market_name}: {richtung} erkannt. Speichere...", flush=True)
+                print(f" ✅ Erkannt: {market_name} -> {richtung}. Speichere in DB...", flush=True)
                 
                 trade_data = {
                     "Vermögenswert": market_name,
@@ -168,9 +177,8 @@ def main():
         except Exception as e:
             print(f"🔥 Worker Fehler: {e}", flush=True)
 
-        # Die absolute Sicherheitsbremse für den Free-Tier:
-        # Garantiert, dass der Google-Zähler wieder auf 0 steht!
-        time.sleep(65) 
+        # Standard-Pause zwischen sauberen Durchläufen
+        time.sleep(45) 
 
 if __name__ == "__main__":
     main()
