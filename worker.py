@@ -5,99 +5,335 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-# --- CRITICAL: PFAD-WEGWEISER ---
-ZENTRALER_PFAD = os.path.dirname(os.path.abspath(__file__))
-if ZENTRALER_PFAD not in sys.path:
-    sys.path.insert(0, ZENTRALER_PFAD)
 
-# --- MODULARE IMPORTS ---
+# ==================================================
+# SYSTEM PFAD
+# ==================================================
+
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+
+if BASE_PATH not in sys.path:
+    sys.path.insert(0, BASE_PATH)
+
+
+# ==================================================
+# IMPORTS
+# ==================================================
+
 from config.settings import HEADERS, SUPABASE_URL
 from agents.gemini_agent import GeminiCoreAgent
 
-# Instanziierung des zentralen KI-Gehirns
+
+# ==================================================
+# KI INITIALISIEREN
+# ==================================================
+
+print("🦅 Initialisiere KI-Agent...", flush=True)
+
 gemini_agent = GeminiCoreAgent()
 
+print("✅ Gemini-Agent geladen", flush=True)
+
+
+
+# ==================================================
+# MARKTDATEN
+# ==================================================
+
 def get_live_kraken_markets():
+
     try:
+
         url = "https://api.kraken.com/0/public/AssetPairs"
-        res = requests.get(url, timeout=5).json()
-        if "result" not in res: return ["XBTUSDT", "ETHUSDT"]
-        pairs = [pair for pair in res.get("result", {}).keys() if pair.endswith("USDT")]
-        return pairs[:3]  # Scannt die Top 3 Märkte für maximale Geschwindigkeit
-    except:
-        return ["XBTUSDT", "ETHUSDT"]
 
-def calculate_advanced_metrics(pair):
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+        data = response.json()
+
+        if "result" not in data:
+            return [
+                "XBTUSDT",
+                "ETHUSDT"
+            ]
+
+
+        markets = [
+            x for x in data["result"].keys()
+            if x.endswith("USDT")
+        ]
+
+
+        return markets[:3]
+
+
+    except Exception as e:
+
+        print(
+            f"❌ Kraken Fehler: {e}",
+            flush=True
+        )
+
+        return [
+            "XBTUSDT",
+            "ETHUSDT"
+        ]
+
+
+
+def calculate_market_metrics(pair):
+
     try:
-        url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=15"
-        res = requests.get(url, timeout=5).json()
-        if "result" not in res or not res["result"]: return None
-            
-        data_points = list(res["result"].values())[0]
-        df = pd.DataFrame(data_points, columns=['time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
-        df['close'] = df['close'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
 
-        df['tr'] = df['high'] - df['low']
-        atr = df['tr'].rolling(14).mean().iloc[-1]
-        ema20 = df['close'].rolling(20).mean().iloc[-1]
-        
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean().iloc[-1]
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean().iloc[-1]
-        rsi = 100 - (100 / (1 + (gain / loss))) if loss > 0 else 100
+        url = (
+            "https://api.kraken.com/0/public/OHLC"
+            f"?pair={pair}&interval=15"
+        )
 
-        return {"live_price": df['close'].iloc[-1], "rsi": round(rsi, 2), "ema": round(ema20, 4), "atr": round(atr, 4)}
-    except:
+
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+
+        data = response.json()
+
+
+        if "result" not in data:
+            return None
+
+
+        candles = list(
+            data["result"].values()
+        )[0]
+
+
+        df = pd.DataFrame(
+            candles,
+            columns=[
+                "time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "vwap",
+                "volume",
+                "count"
+            ]
+        )
+
+
+        df["close"] = df["close"].astype(float)
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
+
+
+
+        df["ema20"] = (
+            df["close"]
+            .rolling(20)
+            .mean()
+        )
+
+
+        delta = df["close"].diff()
+
+
+        gain = (
+            delta.where(delta > 0,0)
+            .rolling(14)
+            .mean()
+        )
+
+
+        loss = (
+            -delta.where(delta < 0,0)
+            .rolling(14)
+            .mean()
+        )
+
+
+        rsi = (
+            100 -
+            (
+                100 /
+                (
+                    1 +
+                    gain.iloc[-1] /
+                    loss.iloc[-1]
+                )
+            )
+        ) if loss.iloc[-1] != 0 else 100
+
+
+
+        return {
+
+            "price":
+                float(df["close"].iloc[-1]),
+
+            "ema":
+                float(df["ema20"].iloc[-1]),
+
+            "rsi":
+                round(float(rsi),2)
+
+        }
+
+
+
+    except Exception as e:
+
+        print(
+            f"❌ Analyse Fehler {pair}: {e}",
+            flush=True
+        )
+
         return None
 
-def run_trading_cycle():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚙️ Starte mathematischen Marktscan...", flush=True)
-    märkte = get_live_kraken_markets()
-    
-    for markt in märkte:
-        metriken = calculate_advanced_metrics(markt)
-        if not metriken: continue
-        
-        rsi = metriken["rsi"]
-        preis = metriken["live_price"]
-        ema = metriken["ema"]
-        
-        print(f" -> Markt: {markt} | Preis: {preis}$ | RSI: {rsi} | EMA20: {ema}", flush=True)
-        
-        # Trend-Bedingung für den automatischen Handel (Simuliert)
-        if preis > ema and rsi < 55:
-            print(f"🎯 SIGNAL GEFUNDEN FÜR {markt}! Frage Agenten-Sentiment...", flush=True)
-            sentiment = gemini_agent.execute_thought_cycle(f"Analysiere das aktuelle Markt-Sentiment für {markt}. Antworte NUR mit 'BUY' oder 'HOLD'.")
-            
-            if "BUY" in sentiment.upper():
-                print(f"🚀 Agent gibt GO! Trage Trade für {markt} ein...", flush=True)
-                trade_data = {
-                    "Vermögenswert": markt,
-                    "Richtung": "LONG",
-                    "Eintrittspreis": preis,
-                    "Marge in USD": 20.0,
-                    "Hebelwirkung": 10,
-                    "Take_Profit_Preis": round(preis * 1.03, 2),
-                    "Stop_Loss_Preis": round(preis * 0.97, 2),
-                    "Status": "ACTIVE",
-                    "Begründung": f"KI-Entscheidung: Ausbruch über EMA20 bestätigt durch Kern-Agent.",
-                    "Indikatoren_Setup": f"RSI: {rsi}, EMA: {ema}",
-                    "Erwartete_Bewegung": "+3.00%"
-                }
-                requests.post(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte", headers=HEADERS, json=trade_data)
-                break
+
+
+
+# ==================================================
+# TRADING ZYKLUS
+# ==================================================
+
+def run_market_cycle():
+
+
+    print(
+        "📈 Starte Marktanalyse...",
+        flush=True
+    )
+
+
+    markets = get_live_kraken_markets()
+
+
+    for market in markets:
+
+
+        metrics = calculate_market_metrics(
+            market
+        )
+
+
+        if not metrics:
+            continue
+
+
+
+        print(
+            f"{market}: "
+            f"{metrics}",
+            flush=True
+        )
+
+
+
+        price = metrics["price"]
+        ema = metrics["ema"]
+        rsi = metrics["rsi"]
+
+
+
+        # einfache Teststrategie
+
+        if price > ema and rsi < 55:
+
+
+            print(
+                f"🎯 Signal {market}",
+                flush=True
+            )
+
+
+
+            answer = (
+                gemini_agent
+                .execute_thought_cycle(
+                    f"""
+                    Analysiere diesen Markt:
+
+                    Asset: {market}
+                    Preis: {price}
+                    RSI: {rsi}
+                    EMA: {ema}
+
+                    Antworte nur:
+                    BUY
+                    oder
+                    HOLD
+                    """
+                )
+            )
+
+
+            print(
+                f"🤖 Gemini: {answer}",
+                flush=True
+            )
+
+
+# ==================================================
+# HAUPTSCHLEIFE
+# ==================================================
+
+def main():
+
+
+    print(
+        "🚀 KIAgent Worker gestartet",
+        flush=True
+    )
+
+
+    while True:
+
+
+        try:
+
+
+            # ----------------------------
+            # CHAT KI
+            # ----------------------------
+
+            print(
+                "💬 Prüfe Chat...",
+                flush=True
+            )
+
+
+            gemini_agent.process_live_chat()
+
+
+
+            # ----------------------------
+            # MARKT
+            # ----------------------------
+
+            run_market_cycle()
+
+
+
+        except Exception as e:
+
+
+            print(
+                f"🔥 Worker Fehler: {e}",
+                flush=True
+            )
+
+
+
+        time.sleep(10)
+
+
+
 
 if __name__ == "__main__":
-    print("🦅 KIAgent Triebwerk mit integriertem KI-Gehirn aktiv...", flush=True)
-    
-    while True:
-        # 1. Chat prüfen und ggf. antworten
-        gemini_agent.process_live_chat()
-        
-        # 2. Märkte scannen und ggf. traden
-        run_trading_cycle()
-        
-        # 5 Sekunden Pause vor der nächsten Runde
-        time.sleep(5)
+
+    main()
