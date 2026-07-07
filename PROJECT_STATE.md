@@ -1,9 +1,10 @@
 # 📊 Aktueller Projektstatus (PROJECT_STATE.md)
 
 ## 🎯 Version
-- **Aktuelle Version:** 0.1.5 (Infrastruktur-Phase)
+- **Aktuelle Version:** 0.2.0 (Modular-Architecture Phase)
 
 ## 🟢 Was funktioniert bereits?
+- Die komplette Enterprise-Ordnerstruktur (inkl. memory/, config/, utils/, agents/) wurde erfolgreich auf GitHub etabliert und mit leeren Basisklassen/Platzhaltern initialisiert.
 - Streamlit-Dashboard zeigt Depot-Metriken live aus Supabase an.
 - Taktische Chat-Eingabe sendet Daten erfolgreich an `public.chat_messages`.
 - Datenbank-Tabellen (`Handelsgeschichte`, `chat_messages`, `Risiko_Log`, `system_knowledge`) sind initialisiert.
