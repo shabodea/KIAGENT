@@ -8,12 +8,12 @@ client = OpenAI(
 )
 
 def get_trading_decision(market_data):
-    # Wir fragen das DeepSeek R1 Modell über OpenRouter
     response = client.chat.completions.create(
-        model="deepseek/deepseek-r1", 
+        model="deepseek/deepseek-r1",
         messages=[
-            {"role": "system", "content": "Du bist ein Trading-Experte. Analysiere den Markt, erkenne Muster und gib deine Einschätzung ab."},
+            {"role": "system", "content": "Du bist ein Trading-Experte. Analysiere den Markt. Gib dein Ergebnis im JSON-Format: {'decision': 'BUY', 'reasoning': '...deine ausführliche Logik...'}"},
             {"role": "user", "content": f"Marktdaten: {market_data}"}
         ]
     )
+    # Das extrahierte JSON wird jetzt in Supabase gespeichert
     return response.choices[0].message.content
