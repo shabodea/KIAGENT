@@ -1,12 +1,18 @@
 import os
-import json
-import re
 from openai import OpenAI
 
-# Client-Initialisierung
+# Wir holen den Key aus deiner Render-Variable
+my_key = os.environ.get("OPENROUTER_API_KEY")
+
+# Falls der Key leer ist, geben wir eine klare Fehlermeldung
+if not my_key:
+    raise ValueError("FEHLER: OPENROUTER_API_KEY wurde in Render nicht gefunden!")
+
+# Wir initialisieren den Client
 client = OpenAI(
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
+    api_key=my_key,
     base_url="https://openrouter.ai/api/v1"
+)
 )
 
 def get_trading_decision(market_data):
