@@ -1,12 +1,9 @@
 import streamlit as st
-import requests
 import pandas as pd
 from datetime import datetime
 
-# --- DATENBANK VERBINDUNG ---
-SUPABASE_URL = "https://swyjycklcbcfhiafibar.supabase.co"
-SUPABASE_KEY = "sb_publishable_e4pYpgdnhEEsN3iEZ6rghQ_M7IGgrl4"
-HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+# --- MODULARE IMPORTS (STRICT TO ARCHITECTURE) ---
+from database.supabase import get_all_data_live, send_chat_message
 
 st.set_page_config(page_title="🦅 KI-Zentrale 10x", layout="wide", initial_sidebar_state="expanded")
 
@@ -22,19 +19,7 @@ st.markdown("""
 st.title("🦅 KI-BROKER EVALUATIONS-ZENTRALE")
 st.caption("Institutionelles Handelsmodell — Mathematische Echtzeit-Überwachung")
 
-# --- SÄULE 1: DATENSAMMLER (DIE LIVE-ABFRAGE DER 4 TABELLEN) ---
-def get_all_data_live():
-    try:
-        timestamp = int(datetime.utcnow().timestamp())
-        t = requests.get(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=*&_ts={timestamp}", headers=HEADERS).json()
-        c = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages?select=*&_ts={timestamp}", headers=HEADERS).json()
-        r = requests.get(f"{SUPABASE_URL}/rest/v1/Risiko_Log?select=*&_ts={timestamp}", headers=HEADERS).json()
-        k = requests.get(f"{SUPABASE_URL}/rest/v1/system_knowledge?select=*&_ts={timestamp}", headers=HEADERS).json()
-        return t, c, r, k
-    except Exception as e:
-        return [], [], [], []
-
-# ABFRAGE DIREKT AM ANFANG STARTEN
+# --- SÄULE 1: DATENSAMMLER (NUN MODULAR ÜBER SUPABASE-MODUL) ---
 trades, chat, risiko, knowledge = get_all_data_live()
 
 # --- SÄULE 3: MATHEMATISCHE SELBSTBEWERTUNG ---
@@ -122,17 +107,11 @@ st.markdown("---")
 # --- STRATEGISCHE BEFEHLSZEILE GANZ UNTEN ---
 st.subheader("⌨️ Taktische Befehlszeile")
 if prompt := st.chat_input("Gib dem Broker eine Anweisung...", key="unique_broker_chat_input_2026"):
-    try:
-        response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/chat_messages", 
-            headers=HEADERS, 
-            json={"role": "user", "content": prompt}
-        )
-        if response.status_code in [200, 201]:
-            st.cache_data.clear()
-            st.rerun()
-    except Exception as e:
-        st.error(f"Netzwerk-Fehler beim Senden: {str(e)}")
+    if send_chat_message("user", prompt):
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        st.error("Fehler beim Senden der Nachricht an Supabase.")
 
 # --- SIDEBAR: UNSTERBLICHES GEDÄCHTNIS ---
 with st.sidebar:
