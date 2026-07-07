@@ -1,7 +1,6 @@
 import sys
 import os
 import requests
-from datetime import datetime
 
 
 # ==================================================
@@ -38,11 +37,8 @@ class GeminiCoreAgent:
 
     def __init__(self):
 
-        # Aktuelles Gemini Modell
         self.model = "gemini-3.5"
-
         self.api_key = GEMINI_API_KEY
-
 
         print(
             f"🤖 Gemini Agent geladen: {self.model}",
@@ -50,20 +46,15 @@ class GeminiCoreAgent:
         )
 
 
-
     # ==================================================
-    # GEMINI DENKPROZESS
+    # GEMINI API
     # ==================================================
 
     def execute_thought_cycle(self, user_prompt):
 
-
         try:
 
-
-            trades, chat, risiko, knowledge = (
-                get_all_data_live()
-            )
+            trades, chat, risiko, knowledge = get_all_data_live()
 
 
             system_context = f"""
@@ -72,13 +63,13 @@ Du bist der zentrale KI-Agent eines Trading-Systems.
 
 Deine Aufgaben:
 
-- analysiere Marktdaten
-- erkläre Trading-Entscheidungen
+- erkläre Marktbewegungen
+- analysiere Trading-Entscheidungen
 - überwache Risiken
+- unterstütze den Nutzer
 - lerne aus gespeicherten Erfahrungen
-- unterstütze den Benutzer
 
-SYSTEM STATUS:
+SYSTEMSTATUS:
 
 Risiko:
 {risiko}
@@ -86,7 +77,7 @@ Risiko:
 Wissen:
 {knowledge}
 
-Aktuelle Trades:
+Letzte Trades:
 {trades[:5] if trades else "Keine Trades"}
 
 """
@@ -94,10 +85,7 @@ Aktuelle Trades:
 
             if not self.api_key:
 
-                return (
-                    "❌ Kein GEMINI_API_KEY gefunden."
-                )
-
+                return "❌ GEMINI_API_KEY fehlt."
 
 
             url = (
@@ -105,7 +93,6 @@ Aktuelle Trades:
                 f"v1beta/models/{self.model}:generateContent"
                 f"?key={self.api_key.strip()}"
             )
-
 
 
             payload = {
@@ -121,7 +108,7 @@ Aktuelle Trades:
                                 "text":
                                 system_context
                                 +
-                                "\n\nBenutzer:\n"
+                                "\n\nBenutzer Anfrage:\n"
                                 +
                                 user_prompt
 
@@ -136,7 +123,6 @@ Aktuelle Trades:
             }
 
 
-
             response = requests.post(
                 url,
                 json=payload,
@@ -147,18 +133,22 @@ Aktuelle Trades:
             data = response.json()
 
 
+            print(
+                f"Gemini API Antwort: {data.keys()}",
+                flush=True
+            )
+
 
             if "candidates" not in data:
 
                 return (
-                    "❌ Gemini API Fehler:\n"
+                    "❌ Gemini Fehler:\n"
                     +
                     str(data)
                 )
 
 
-
-            answer = (
+            return (
                 data["candidates"][0]
                 ["content"]
                 ["parts"][0]
@@ -166,58 +156,51 @@ Aktuelle Trades:
             )
 
 
-            return answer
-
-
-
         except Exception as e:
-
 
             return (
                 f"❌ Denkprozess Fehler: {e}"
             )
 
 
-
     # ==================================================
-    # CHAT ÜBERWACHUNG
+    # LIVE CHAT
     # ==================================================
 
     def process_live_chat(self):
 
-
         try:
 
-
             print(
-                "🔎 Prüfe Chat...",
+                "💬 Chatprüfung gestartet...",
                 flush=True
             )
 
 
-            _, chat, _, _ = (
-                get_all_data_live()
+            _, chat, _, _ = get_all_data_live()
+
+
+            print(
+                f"Chat Inhalt: {chat}",
+                flush=True
             )
 
 
             if not chat:
 
-
                 print(
-                    "Keine Nachrichten.",
+                    "Keine Chatnachrichten gefunden.",
                     flush=True
                 )
 
-                return
+                return False
 
 
 
             latest = sorted(
                 chat,
-                key=lambda x:
-                x.get("id", 0)
+                key=lambda x: x.get("id",0)
             )[-1]
-
 
 
             print(
@@ -227,47 +210,47 @@ Aktuelle Trades:
 
 
 
-            if latest.get("role") != "user":
+            role = latest.get("role")
 
+
+            if role != "user":
 
                 print(
-                    "Keine neue User-Anfrage.",
+                    "Letzte Nachricht ist keine User Nachricht.",
                     flush=True
                 )
 
-                return
+                return False
 
 
 
-            user_text = (
-                latest.get("content", "")
+            user_text = latest.get(
+                "content",
+                ""
             )
-
 
 
             if not user_text:
 
-                return
+                return False
 
 
 
             print(
-                f"🧠 Gemini denkt über: {user_text}",
+                f"🧠 Gemini verarbeitet: {user_text}",
                 flush=True
             )
 
 
 
-            answer = (
-                self.execute_thought_cycle(
-                    user_text
-                )
+            answer = self.execute_thought_cycle(
+                user_text
             )
 
 
 
             print(
-                "💬 Antwort erzeugt",
+                f"💬 Gemini Antwort: {answer[:200]}",
                 flush=True
             )
 
@@ -281,9 +264,12 @@ Aktuelle Trades:
 
 
             print(
-                "✅ Antwort gespeichert",
+                "✅ Antwort in Supabase gespeichert.",
                 flush=True
             )
+
+
+            return True
 
 
 
@@ -291,6 +277,8 @@ Aktuelle Trades:
 
 
             print(
-                f"🔥 Chat Fehler: {e}",
+                f"🔥 Fehler im Chat-Prozess: {e}",
                 flush=True
             )
+
+            return False
