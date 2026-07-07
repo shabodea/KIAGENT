@@ -1,158 +1,39 @@
 import requests
-from datetime import datetime
-
 from config.settings import SUPABASE_URL, HEADERS
 
-
-# ==================================================
-# SUPABASE LIVE DATEN
-# ==================================================
-
 def get_all_data_live():
-
+    """
+    Fragt alle 4 Haupttabellen synchron aus Supabase ab.
+    FEHLERBEHEBUNG: Cache-Buster (_ts) entfernt, da PostgREST ihn als Spalten-Filter interpretiert!
+    """
     try:
-
-        timestamp = int(
-            datetime.utcnow().timestamp()
-        )
-
-
-        trades_response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/Handelsgeschichte",
-            headers=HEADERS,
-            params={
-                "select": "*",
-                "_ts": timestamp
-            },
-            timeout=10
-        )
-
-
-        chat_response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/chat_messages",
-            headers=HEADERS,
-            params={
-                "select": "*",
-                "order": "id.asc",
-                "_ts": timestamp
-            },
-            timeout=10
-        )
-
-
-        risiko_response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/Risiko_Log",
-            headers=HEADERS,
-            params={
-                "select": "*",
-                "_ts": timestamp
-            },
-            timeout=10
-        )
-
-
-        knowledge_response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/system_knowledge",
-            headers=HEADERS,
-            params={
-                "select": "*",
-                "_ts": timestamp
-            },
-            timeout=10
-        )
-
-
-        trades = trades_response.json()
-        chat = chat_response.json()
-        risiko = risiko_response.json()
-        knowledge = knowledge_response.json()
-
-
-        print(
-            f"DB STATUS | Trades:{len(trades) if isinstance(trades,list) else 0} "
-            f"Chat:{len(chat) if isinstance(chat,list) else 0}",
-            flush=True
-        )
-
-
-        return (
-
-            trades if isinstance(trades,list) else [],
-            chat if isinstance(chat,list) else [],
-            risiko if isinstance(risiko,list) else [],
-            knowledge if isinstance(knowledge,list) else []
-
-        )
-
-
+        t = requests.get(f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=*", headers=HEADERS).json()
+        c = requests.get(f"{SUPABASE_URL}/rest/v1/chat_messages?select=*", headers=HEADERS).json()
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/Risiko_Log?select=*", headers=HEADERS).json()
+        k = requests.get(f"{SUPABASE_URL}/rest/v1/system_knowledge?select=*", headers=HEADERS).json()
+        
+        # Falls Supabase Fehler-Dictionaries statt Listen zurückgibt, Fallback aktivieren
+        trades = t if isinstance(t, list) else []
+        chat = c if isinstance(c, list) else []
+        risiko = r if isinstance(r, list) else []
+        knowledge = k if isinstance(k, list) else []
+        
+        return trades, chat, risiko, knowledge
     except Exception as e:
-
-
-        print(
-            f"🔥 Supabase Lesefehler: {e}",
-            flush=True
-        )
-
-
+        print(f" Kritischer Datenbank-Verbindungsfehler: {e}")
         return [], [], [], []
 
-
-
-# ==================================================
-# CHAT SCHREIBEN
-# ==================================================
-
 def send_chat_message(role, content):
-
+    """
+    Sendet eine neue Nachricht (user oder assistant) an die chat_messages Tabelle.
+    """
     try:
-
-        payload = {
-
-            "role": role,
-            "content": content,
-            "created_at":
-                datetime.utcnow().isoformat()
-
-        }
-
-
         response = requests.post(
-
-            f"{SUPABASE_URL}/rest/v1/chat_messages",
-
-            headers={
-                **HEADERS,
-                "Prefer":
-                "return=minimal"
-            },
-
-            json=payload,
-
-            timeout=10
-
+            f"{SUPABASE_URL}/rest/v1/chat_messages", 
+            headers=HEADERS, 
+            json={"role": role, "content": content}
         )
-
-
-        print(
-            f"CHAT WRITE {role}: {response.status_code}",
-            flush=True
-        )
-
-
-        return response.status_code in [
-            200,
-            201,
-            204
-        ]
-
-
+        return response.status_code in [200, 201]
     except Exception as e:
-
-
-        print(
-            f"🔥 Chat Schreibfehler: {e}",
-            flush=True
-        )
-
-
+        print(f"Fehler beim Senden der Chat-Nachricht: {e}")
         return False
