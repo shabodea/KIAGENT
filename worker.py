@@ -1,12 +1,16 @@
+import sys
+import os
+
+# --- CRITICAL: DIESE ZEILEN MÜSSEN GANZ OBEN STEHEN (VOR ALLEN ANDEREN IMPORTS) ---
+ZENTRALER_PFAD = os.path.dirname(os.path.abspath(__file__))
+if ZENTRALER_PFAD not in sys.path:
+    sys.path.insert(0, ZENTRALER_PFAD)
+
+# --- JETZT FOLGEN DIE RESTLICHEN STANDARD-IMPORTS ---
 import time
 import requests
 import pandas as pd
 from datetime import datetime
-import sys
-import os
-
-# --- WEGWEISER FÜR PYTHON EINRICHTEN (FIX FÜR MODULENOTFOUNDERROR) ---
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # --- MODULARE IMPORTS (STRICT TO ARCHITECTURE) ---
 from config.settings import GEMINI_API_KEY
@@ -73,11 +77,9 @@ def ask_gemini_expert(prompt_text):
 # --- SÄULE 4: TAKTISCHE CHAT-VERARBEITUNG ---
 def process_chat():
     try:
-        # Daten sauber über unser neues Datenbank-Modul abrufen
         trades, chat, risiko, knowledge = get_all_data_live()
         
         if chat and len(chat) > 0:
-            # Chronologisch sortieren und die letzte Nachricht prüfen
             latest_msg = sorted(chat, key=lambda x: x.get('id', 0))[-1]
             if latest_msg["role"] == "user":
                 user_input = latest_msg["content"]
@@ -86,8 +88,6 @@ def process_chat():
                 prompt = f"System-Kontext: {kontext}\n\nMaster fragt: {user_input}\nAntworte als professioneller Broker kurz auf Deutsch."
                 
                 bot_response = ask_gemini_expert(prompt)
-                
-                # Antwort wird nun ebenfalls sauber über das Modul zurückgeschrieben
                 send_chat_message("assistant", bot_response)
     except Exception as e: 
         print(f"Chat-Loop Fehler: {e}")
@@ -97,5 +97,4 @@ if __name__ == "__main__":
     print("🦅 KIAgent Triebwerk erfolgreich gestartet...")
     while True:
         process_chat()
-        # Hier läuft dein Trading-Zyklus stabil im Hintergrund
         time.sleep(15)
