@@ -71,7 +71,8 @@ def close_trade(asset, exit_price, pnl):
         trade_id = trades[0]['id']
         data = {
             "Status": "CLOSED",
-            "net_pnl": pnl
+            "net_pnl": pnl,
+            "Austrittspreis": exit_price  # Wichtig: Speichert den Exit-Preis!
         }
         response = requests.patch(
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?id=eq.{trade_id}",
