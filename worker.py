@@ -31,12 +31,11 @@ def get_current_balance():
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=net_pnl&Status=eq.CLOSED",
             headers=HEADERS
         ).json()
-        if not resp:
-            return 200.0
+        if not resp: return 200.0
         total_pnl = sum(float(t.get('net_pnl', 0.0)) for t in resp)
         return 200.0 + total_pnl
     except Exception as e:
-        print(f"⚠️ Fehler beim Abrufen des Guthabens: {e}")
+        print(f"⚠️ Fehler beim Guthaben: {e}")
         return 200.0
 
 def get_asset_data(symbol):
@@ -87,9 +86,7 @@ def get_entry_decision(market_data, balance):
     history = get_performance_summary(market_data['symbol'])
     
     prompt = f"""
-    Du bist ein erfahrener KI-Trader mit {balance:.2f}€ Kapital.
-    Du benutzt 10x Hebel und riskierst 10% deines Guthabens pro Trade.
-    
+    Du bist ein erfahrener KI-Trader mit {balance:.2f}€ Kapital, 10x Hebel, 10% Risiko.
     Marktdaten für {market_data['symbol']} (Kurs: {market_data['last']}):
     - 5m RSI: {rsi_5m:.1f}
     - 15m RSI: {rsi_15m:.1f}
@@ -100,12 +97,8 @@ def get_entry_decision(market_data, balance):
     --- DEINE LETZTEN 5 TRADES ---
     {history}
     -----------------------------------------
-    
-    AUFGABE: Entscheide BUY / SELL / HOLD.
-    Wenn BUY oder SELL, gib auch Stop-Loss und Take-Profit an.
-    Antworte NUR JSON: {{"decision": "BUY"/"SELL"/"HOLD", "reasoning": "...", "stop_loss": 0.0, "take_profit": 0.0}}
+    Entscheide BUY / SELL / HOLD. Antworte NUR JSON: {{"decision": "BUY"/"SELL"/"HOLD", "reasoning": "...", "stop_loss": 0.0, "take_profit": 0.0}}
     """
-    
     answer, _ = router.route(prompt, system_context="NUR JSON.", preferred_model="groq")
     match = re.search(r'\{.*\}', answer, re.DOTALL)
     if match:
@@ -115,17 +108,13 @@ def get_entry_decision(market_data, balance):
 
 def analyze_learn(asset, entry_price, exit_price, pnl, margin, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
-    prompt = f"""
-    Trade auf {asset} beendet mit {profit_text} von ${pnl:.2f}. Marge: ${margin:.2f}, 10x Hebel.
-    Einstieg: {entry_price}, Ausstieg: {exit_price}. Grund: {reasoning}.
-    Gib mir eine kurze, wertvolle Lektion auf Deutsch (Lob bei Gewinn, konstruktive Kritik bei Verlust).
-    """
+    prompt = f"Trade auf {asset} beendet mit {profit_text} von ${pnl:.2f}. Marge: ${margin:.2f}, 10x Hebel. Lehre mich eine Lektion."
     router = ModelRouter()
-    answer, _ = router.route(prompt, system_context="Du bist ein motivierender Coach.", preferred_model="groq")
+    answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="groq")
     send_chat_message("system", f"📘 Lektion aus dem {profit_text}: {answer}")
 
 def main_loop():
-    print("🧠 KI-Trader gestartet (10x Hebel, 10% Risiko, 200€ Start).", flush=True)
+    print("🧠 KI-Trader gestartet (10s Chat-Intervall, 60s Trading-Intervall).", flush=True)
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
@@ -134,12 +123,11 @@ def main_loop():
     while True:
         try:
             balance = get_current_balance()
-            margin_per_trade = balance * 0.10  # 10% Risiko
+            margin_per_trade = balance * 0.10
 
             for symbol in MONITORED_ASSETS:
                 if time.time() - last_api_call.get(symbol, 0) < 60:
                     continue
-                
                 data = get_asset_data(symbol)
                 if not data: continue
                 
@@ -153,49 +141,36 @@ def main_loop():
                     entry_price = float(active_trades[0]['Eintrittspreis'])
                     direction = active_trades[0]['direction']
                 else:
-                    entry_price = 0.0
-                    direction = "HOLD"
+                    entry_price, direction = 0.0, "HOLD"
                 
                 rsi_5m = calculate_rsi(data['closes_5m'])
                 rsi_15m = calculate_rsi(data['closes_15m'])
                 
-                # EXIT (bei RSI > 70 oder < 30, Notfall ohne KI)
-                if has_position and (rsi_5m > 70 or rsi_15m > 70 or rsi_5m < 30 or rsi_15m < 30):
-                    # PnL mit 10x Hebel berechnen
+                # Exit
+                if has_position and (rsi_5m > 70 or rsi_15m > 70):
                     price_change_pct = (data['last'] - entry_price) / entry_price
-                    if direction == 'SELL':
-                        price_change_pct *= -1
-                    pnl = margin_per_trade * price_change_pct * 10  # 10x Hebel
-                    
+                    if direction == 'SELL': price_change_pct *= -1
+                    pnl = margin_per_trade * price_change_pct * 10
                     close_trade(symbol, data['last'], pnl)
-                    send_chat_message("system", f"⚡ {symbol}: Exit bei RSI {rsi_5m:.1f}. PnL: ${pnl:.2f}")
                     analyze_learn(symbol, entry_price, data['last'], pnl, margin_per_trade, "Notfall-Exit")
                     continue
                 
-                # ENTRY (KI entscheidet, wenn keine Position offen ist)
+                # Entry
                 elif not has_position:
                     decision = get_entry_decision(data, balance)
                     last_api_call[symbol] = time.time()
-                    
                     if decision['decision'] in ['BUY', 'SELL']:
                         save_trade(
-                            asset=symbol,
-                            direction=decision['decision'],
-                            entry_price=data['last'],
-                            stop_loss=decision.get('stop_loss', 0.0),
+                            asset=symbol, direction=decision['decision'],
+                            entry_price=data['last'], stop_loss=decision.get('stop_loss', 0.0),
                             take_profit=decision.get('take_profit', 0.0),
                             reasoning=decision.get('reasoning', 'Flexible KI'),
                             indicators=f"5m RSI:{rsi_5m:.1f}, 15m RSI:{rsi_15m:.1f}",
-                            expected_move='Scalping',
-                            margin_usd=margin_per_trade,
-                            leverage=10,  # FESTER 10x HEBEL
-                            status='ACTIVE'
+                            expected_move='Scalping', margin_usd=margin_per_trade, leverage=10, status='ACTIVE'
                         )
-                        send_chat_message("system", f"🟢 Einstieg {symbol}: {decision['decision']} bei {data['last']}. Marge: ${margin_per_trade:.2f} (10x Hebel).")
-                    else:
-                        print(f"⏸️ {symbol} - HOLD (Groq: {decision['reasoning']})", flush=True)
 
-            if int(time.time()) % 5 == 0:
+            # Chat nur alle 10 Sekunden abfragen (um die Latenz extrem zu reduzieren)
+            if int(time.time()) % 10 == 0:
                 new_id = agent.process_live_chat(last_chat_id)
                 if new_id is not None: last_chat_id = new_id
 
