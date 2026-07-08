@@ -5,7 +5,7 @@ import time
 import ccxt
 import yfinance as yf
 import numpy as np
-import requests  # <-- FEHLER BEHOBEN
+import requests  # <-- sichergestellt
 from agents.model_router import ModelRouter
 from database.supabase import send_chat_message, save_trade, close_trade
 from config.settings import SUPABASE_URL, HEADERS
@@ -31,29 +31,41 @@ def calculate_rsi(prices, period=14):
     rs = up / down
     return 100 - (100 / (1 + rs))
 
-# --- HELFER: ASSET-DATEN HOLEN (5m, 15m, 1h) ---
+# --- HELFER: ASSET-DATEN HOLEN (ROBUSTER) ---
 def get_asset_data(symbol):
     try:
         if symbol in ["SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"]:
-            ticker = yf.Ticker(symbol)
-            data_5m = ticker.history(period="2d", interval="5m")
-            data_1h = ticker.history(period="5d", interval="1h")
+            # Aktien: separate Abfragen für 5m, 15m, 1h
+            data_5m = yf.download(symbol, period="2d", interval="5m", progress=False)
             if data_5m.empty:
+                print(f"⚠️ Keine 5m Daten für {symbol}")
+                return None
+            data_15m = yf.download(symbol, period="2d", interval="15m", progress=False)
+            if data_15m.empty:
+                # Falls 15m nicht verfügbar, überspringe dieses Asset
+                print(f"⚠️ Keine 15m Daten für {symbol}")
+                return None
+            data_1h = yf.download(symbol, period="5d", interval="1h", progress=False)
+            if data_1h.empty:
+                print(f"⚠️ Keine 1h Daten für {symbol}")
                 return None
             last_price = data_5m['Close'].iloc[-1]
             return {
                 "symbol": symbol,
                 "last": last_price,
                 "closes_5m": data_5m['Close'].tolist(),
-                "closes_15m": data_5m.resample('15T').last()['Close'].tolist(),
+                "closes_15m": data_15m['Close'].tolist(),
                 "closes_1h": data_1h['Close'].tolist()
             }
         else:
+            # Krypto
             exchange = ccxt.kraken()
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
             ohlcv_5m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='5m', limit=50)
-            ohlcv_15m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='15m', limit=50)  # <-- KORRIGIERT
+            ohlcv_15m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='15m', limit=50)
             ohlcv_1h = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='1h', limit=50)
+            if not ohlcv_5m or not ohlcv_15m or not ohlcv_1h:
+                return None
             return {
                 "symbol": symbol,
                 "last": ticker['last'],
@@ -62,10 +74,10 @@ def get_asset_data(symbol):
                 "closes_1h": [c[4] for c in ohlcv_1h]
             }
     except Exception as e:
-        print(f"❌ Fehler bei {symbol}: {e}")
+        print(f"❌ Fehler bei get_asset_data für {symbol}: {e}")
         return None
 
-# --- KI ENTSCHEIDUNG (AKTIVER EINSTIEG) ---
+# --- KI ENTSCHEIDUNG ---
 def get_entry_decision(market_data):
     router = ModelRouter()
     rsi_5m = calculate_rsi(market_data['closes_5m'])
@@ -101,7 +113,7 @@ def get_entry_decision(market_data):
             pass
     return {"decision": "HOLD", "reasoning": "Fehler im JSON", "stop_loss": 0.0, "take_profit": 0.0}
 
-# --- POST-TRADE ANALYSE (DER BOT LERNT AUS JEDEM TRADE) ---
+# --- POST-TRADE ANALYSE ---
 def analyze_learn(asset, entry_price, exit_price, pnl, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
     
@@ -141,7 +153,6 @@ def main_loop():
                 
                 has_position = len(active_trades) > 0
                 entry_price = float(active_trades[0]['Eintrittspreis']) if has_position else 0.0
-                trade_id = active_trades[0]['id'] if has_position else 0
                 
                 rsi_5m = calculate_rsi(data['closes_5m'])
                 rsi_15m = calculate_rsi(data['closes_15m'])
@@ -178,7 +189,7 @@ def main_loop():
                 if new_id is not None:
                     last_chat_id = new_id
 
-            time.sleep(1)  # Blitzschnelle Überprüfung
+            time.sleep(1)
         except Exception as e:
             print(f"❌ Fehler im Hauptloop: {e}", flush=True)
             time.sleep(10)
