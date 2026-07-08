@@ -12,7 +12,7 @@ from config.settings import SUPABASE_URL, HEADERS
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRX-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
-    "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "MIDNIGHT-USD"
+    "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "NIGHT-USD"  # <-- Korrigiert
 ]
 
 def calculate_rsi(prices, period=14):
@@ -61,7 +61,6 @@ def get_asset_data(symbol):
         return None
 
 def get_performance_summary(symbol):
-    # EXTREM GEKÜRZT, um Token zu sparen!
     try:
         resp = requests.get(
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=net_pnl&Vermögenswert=eq.{symbol}&Status=eq.CLOSED&order=id.desc&limit=3",
@@ -81,7 +80,6 @@ def get_entry_decision(market_data, balance):
     rsi_1h = calculate_rsi(market_data['closes_1h'])
     history = get_performance_summary(market_data['symbol'])
     
-    # KÜRZERER PROMPT, um das Token-Limit von Groq zu entlasten
     prompt = f"""
     {balance:.0f}€, 10x Hebel. 
     {market_data['symbol']} at {market_data['last']}. 5m RSI:{rsi_5m:.1f}, 15m:{rsi_15m:.1f}, 1h:{rsi_1h:.1f}.
@@ -100,7 +98,7 @@ def analyze_learn(asset, entry_price, exit_price, pnl, margin, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
     prompt = f"Trade {asset} {profit_text} ${pnl:.2f}. Lehre mich eine 1-Satz-Lektion."
     router = ModelRouter()
-    answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="gemini") # Chat & Lernen über Gemini
+    answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="gemini")
     send_chat_message("system", f"📘 Lektion: {answer}")
 
 def main_loop():
@@ -109,7 +107,7 @@ def main_loop():
     agent = GeminiCoreAgent()
     last_chat_id = 0
     last_api_call = {asset: 0 for asset in MONITORED_ASSETS}
-    COOLDOWN_TRADING = 600  # 10 Minuten (statt 60 Sekunden)!
+    COOLDOWN_TRADING = 600  # 10 Minuten
 
     while True:
         try:
@@ -117,7 +115,6 @@ def main_loop():
             margin_per_trade = balance * 0.10
 
             for symbol in MONITORED_ASSETS:
-                # Wartezeit von 10 Minuten abwarten
                 if time.time() - last_api_call.get(symbol, 0) < COOLDOWN_TRADING:
                     continue
                 
@@ -162,12 +159,11 @@ def main_loop():
                             expected_move='Scalp', margin_usd=margin_per_trade, leverage=10, status='ACTIVE'
                         )
 
-            # Chat nur alle 30 Sekunden abfragen (Gemini 20/min Limit geschützt!)
             if int(time.time()) % 30 == 0:
                 new_id = agent.process_live_chat(last_chat_id)
                 if new_id is not None: last_chat_id = new_id
 
-            time.sleep(5)  # Hauptschleife entschleunigen
+            time.sleep(5)
         except Exception as e:
             print(f"❌ Fehler im Hauptloop: {e}", flush=True)
             time.sleep(30)
