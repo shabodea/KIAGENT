@@ -83,16 +83,22 @@ if isinstance(trades, list) and len(trades) > 0:
         if isinstance(t, dict) and t.get("Status") == "CLOSED":
             pnl = float(t.get("net_pnl") or 0.0)
             guthaben += pnl
-            if pnl > 0: win_trades += 1
-            else: loss_trades += 1
+            if pnl > 0:
+                win_trades += 1
+            else:
+                loss_trades += 1
 total = win_trades + loss_trades
 win_rate = (win_trades / total * 100) if total > 0 else 0.0
+
+# Dynamisches Risiko basierend auf Trefferquote (Kelly-Kriterium)
+# Formel: max(0.5%, min(3%, (2*Winrate-1)*5))
+dynamic_risk = max(0.5, min(3.0, (2 * (win_rate / 100) - 1) * 5))
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("💰 Depotwert", f"${guthaben:.2f}")
 col2.metric("📊 Trefferquote", f"{win_rate:.1f}%")
 col3.metric("🛡️ Risiko-Status", "NORMAL" if guthaben > 180 else "KRITISCH")
-col4.metric("⚡ Hebel", "10x FIX")
+col4.metric("⚡ Dynamisches Risiko", f"{dynamic_risk:.1f}%", help="Prozentsatz des Guthabens, den der Bot pro Trade riskiert (0.5% - 3%)")
 
 st.markdown("---")
 
