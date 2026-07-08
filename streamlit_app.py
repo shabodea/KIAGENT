@@ -15,11 +15,9 @@ st.markdown("""
     .system_msg { color: #ffcc00; }
     .user_msg { color: #4da6ff; }
     .assistant_msg { color: #00ff66; }
-    .stDataFrame { font-size: 0.8rem; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- DEINE VOLLSTÄNDIGE ASSET-LISTE (Krypto + Aktien) ---
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRON-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
@@ -27,10 +25,8 @@ MONITORED_ASSETS = [
     "SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"
 ]
 
-# Zeitfenster
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
-# --- RSI BERECHNUNG ---
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50
     deltas = np.diff(prices)
@@ -41,49 +37,49 @@ def calculate_rsi(prices, period=14):
     rs = up / down
     return 100 - (100 / (1 + rs))
 
-# --- MARKTDATEN FÜR ALLE 5 ZEITFENSTER ABRUFEN ---
+def fetch_data_robust(symbol, tf):
+    # AKTIEN (Fallback: 5m -> 15m -> 1h)
+    if symbol in ["SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"]:
+        try:
+            # Versuche 5m
+            data = yf.download(symbol, period="2d", interval=tf, progress=False)
+            if data.empty and tf != "1h":
+                # Falls 5m oder 15m leer -> nimm 1h als Notfall
+                data = yf.download(symbol, period="5d", interval="1h", progress=False)
+            if data.empty:
+                return None
+            closes = data['Close'].tolist()
+            volume = data['Volume'].iloc[-1]
+            vol_prev = data['Volume'].iloc[-2] if len(data) > 1 else volume
+            return closes, volume, vol_prev
+        except:
+            return None
+    else:
+        # KRYPTO (CCXT)
+        try:
+            exchange = ccxt.kraken()
+            ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
+            closes = [c[4] for c in ohlcv]
+            volume = ohlcv[-1][5]
+            vol_prev = ohlcv[-2][5] if len(ohlcv) > 1 else volume
+            return closes, volume, vol_prev
+        except:
+            return None
+
 @st.cache_data(ttl=30)
 def get_market_overview_multi_tf(assets):
     results = []
-    # helper: Daten holen
-    def fetch_data(symbol, tf):
-        if symbol in ["SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"]:  # Aktien
-            try:
-                data = yf.download(symbol, period="2d", interval=tf, progress=False)
-                if data.empty: return None
-                closes = data['Close'].tolist()
-                volume = data['Volume'].iloc[-1]
-                vol_prev = data['Volume'].iloc[-2] if len(data) > 1 else volume
-                return closes, volume, vol_prev
-            except: return None
-        else:  # Krypto
-            try:
-                exchange = ccxt.kraken()
-                ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
-                closes = [c[4] for c in ohlcv]
-                volume = ohlcv[-1][5]
-                vol_prev = ohlcv[-2][5] if len(ohlcv) > 1 else volume
-                return closes, volume, vol_prev
-            except: return None
-
     for symbol in assets:
         row = {"Symbol": symbol}
         signals = []
         try:
             for tf in TIMEFRAMES:
-                data = fetch_data(symbol, tf)
+                data = fetch_data_robust(symbol, tf)
                 if data:
                     closes, vol, vol_prev = data
                     rsi = calculate_rsi(closes)
-                    
-                    # Signal
-                    if rsi < 30: sig = "BUY"
-                    elif rsi > 70: sig = "SELL"
-                    else: sig = "HOLD"
-                    
-                    # Volumen-Trend
+                    sig = "BUY" if rsi < 30 else ("SELL" if rsi > 70 else "HOLD")
                     vol_trend = "📈 Steigend" if vol > vol_prev else "📉 Fallend"
-                    
                     row[f"{tf}_Sig"] = sig
                     row[f"{tf}_Vol"] = vol_trend
                     signals.append(sig)
@@ -92,10 +88,8 @@ def get_market_overview_multi_tf(assets):
                     row[f"{tf}_Vol"] = "N/A"
                     signals.append("HOLD")
             
-            # Gesamt-Feedback generieren
             buy_cnt = signals.count("BUY")
             sell_cnt = signals.count("SELL")
-            
             if buy_cnt >= 4: feedback = "🟢 Stark Kaufsignal"
             elif buy_cnt >= 2: feedback = "🟡 Kaufneigung"
             elif sell_cnt >= 4: feedback = "🔴 Stark Verkaufssignal"
@@ -106,12 +100,10 @@ def get_market_overview_multi_tf(assets):
             results.append(row)
         except:
             continue
-            
     return pd.DataFrame(results) if results else pd.DataFrame()
 
 trades, chat, risiko, knowledge = get_all_data_live()
 
-# --- METRIKEN ---
 guthaben = 200.0
 win_trades, loss_trades = 0, 0
 if isinstance(trades, list) and len(trades) > 0:
@@ -131,20 +123,16 @@ col3.metric("🛡️ Risiko-Status", "NORMAL" if guthaben > 180 else "KRITISCH")
 col4.metric("⚡ Schutzschild", risiko[0].get("status") if isinstance(risiko, list) and len(risiko) > 0 else "OFFEN")
 
 st.markdown("---")
-
-# --- NEUE MARKTÜBERSICHT (5 ZEITFENSTER + VOLUMEN) ---
 st.subheader(f"📊 Live-Marktübersicht ({len(MONITORED_ASSETS)} Assets)")
 
 df_market = get_market_overview_multi_tf(MONITORED_ASSETS)
 
 if not df_market.empty:
-    # Wir formatieren die Tabelle, damit BUY grün, SELL rot und HOLD grau ist.
     def highlight_signals(val):
         if "BUY" in str(val): return "color: #00ff66; font-weight: bold;"
         elif "SELL" in str(val): return "color: #ff4d4d; font-weight: bold;"
         elif "HOLD" in str(val): return "color: #888888;"
         return ""
-    
     st.dataframe(
         df_market.style.map(highlight_signals, subset=[f"{tf}_Sig" for tf in TIMEFRAMES]),
         use_container_width=True,
@@ -152,11 +140,9 @@ if not df_market.empty:
         height=600
     )
 else:
-    st.info("Marktdaten werden geladen (bitte warten)...")
+    st.info("Marktdaten werden geladen...")
 
 st.markdown("---")
-
-# --- REST: GEDANKEN, HANDELSPLATZ, CHAT ---
 left_col, right_col = st.columns([2, 1])
 with left_col:
     st.subheader("🧠 Live-Denkprotokoll")
@@ -164,7 +150,8 @@ with left_col:
         sys_msgs = [m for m in chat if m.get("role") == "system"]
         if sys_msgs:
             st.markdown(f"<div class='thought-box'>{sys_msgs[-1].get('content', '')}</div>", unsafe_allow_html=True)
-        else: st.info("Der Bot denkt noch...")
+        else:
+            st.info("Der Bot denkt noch...")
 
     st.subheader("📊 Handelsplatz – Aktive Positionen")
     active = [t for t in trades if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades, list) else []
@@ -195,7 +182,6 @@ with right_col:
                 elif role == "assistant":
                     st.markdown(f"<div class='assistant_msg'>🤖 <b>KI:</b> {content}</div>", unsafe_allow_html=True)
 
-# --- CHAT ---
 st.markdown("---")
 prompt = st.chat_input("Befehl an den Broker...", key="broker_input")
 if prompt:
@@ -208,4 +194,4 @@ with st.sidebar:
     st.header("🧠 KI-Gedächtnis")
     if isinstance(knowledge, list) and len(knowledge) > 0:
         for k in knowledge: st.caption(f"📌 **{k.get('kategorie')}**: {k.get('inhalt')}")
-    st.caption("⚙️ Status: LIVE | 24/7 | Multi-Timeframe")
+    st.caption("⚙️ Status: LIVE | 24/7")
