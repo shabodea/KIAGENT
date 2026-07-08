@@ -41,13 +41,28 @@ def get_market_overview(assets):
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
             row = {"Symbol": symbol, "Kurs (USD)": f"${ticker['last']:,.2f}"}
             timeframes = ['5m', '15m', '1h', '4h', '1d']
+            
             for tf in timeframes:
                 try:
                     ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
                     if ohlcv:
-                        rsi = calculate_rsi([c[4] for c in ohlcv])
-                        sig = "LONG" if rsi < 30 else ("SHORT" if rsi > 70 else "WARTEN")
-                        row[f"{tf}_RSI"] = f"{rsi:.1f}"
+                        # RSI für den gesamten Datensatz berechnen, um den Trend zu erkennen
+                        closes = [c[4] for c in ohlcv]
+                        rsi_values = []
+                        for i in range(len(closes)):
+                            if i >= 14:
+                                rsi_values.append(calculate_rsi(closes[:i+1]))
+                        
+                        if len(rsi_values) >= 2:
+                            current_rsi = rsi_values[-1]
+                            prev_rsi = rsi_values[-2]
+                            trend = "⬆️" if current_rsi > prev_rsi else "⬇️"
+                        else:
+                            current_rsi = 50
+                            trend = "➖"
+                        
+                        sig = "LONG" if current_rsi < 30 else ("SELL" if current_rsi > 70 else "HOLD")
+                        row[f"{tf}_RSI"] = f"{trend} {current_rsi:.1f}"
                         row[f"{tf}_Sig"] = sig
                     else:
                         row[f"{tf}_RSI"] = "N/A"
@@ -85,8 +100,39 @@ st.markdown("---")
 # --- MARKTÜBERSICHT ---
 st.subheader(f"📊 Live-Übersicht (Alle Assets & Signale)")
 df_market = get_market_overview(MONITORED_ASSETS)
+
 if not df_market.empty:
-    st.dataframe(df_market, use_container_width=True, hide_index=True, height=600)
+    # Styling-Funktion für Signale und RSI-Trends
+    def highlight_cells(val):
+        # Signal-Farben
+        if "LONG" in str(val):
+            return "background-color: #1a3b1a; color: #00ff66; font-weight: bold;"
+        elif "SELL" in str(val):
+            return "background-color: #3b1a1a; color: #ff4d4d; font-weight: bold;"
+        elif "HOLD" in str(val):
+            return "background-color: #2a2a2a; color: #ffcc00; font-weight: bold;"
+        
+        # RSI-Trend-Farben
+        if "⬆️" in str(val):
+            return "color: #00ff66; font-weight: bold;"
+        elif "⬇️" in str(val):
+            return "color: #ff4d4d; font-weight: bold;"
+        elif "N/A" in str(val):
+            return "color: #555555;"
+            
+        return ""
+    
+    signal_cols = [f"{tf}_Sig" for tf in ['5m', '15m', '1h', '4h', '1d']]
+    rsi_cols = [f"{tf}_RSI" for tf in ['5m', '15m', '1h', '4h', '1d']]
+    
+    styled_df = df_market.style.map(highlight_cells, subset=signal_cols + rsi_cols)
+    
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=600
+    )
 else:
     st.info("Marktdaten werden geladen...")
 
@@ -96,7 +142,6 @@ left_col, right_col = st.columns([2, 1])
 with left_col:
     st.subheader("🧠 Selbst-Reflexion des Bots")
     if isinstance(chat, list):
-        # Zeige die neueste System-Nachricht, die eine Selbstreflexion (🤔) enthält
         sys_msgs = [m for m in chat if m.get("role") == "system" and "🤔" in m.get("content", "")]
         if sys_msgs:
             st.info(sys_msgs[-1].get("content", ""))
@@ -113,7 +158,6 @@ with left_col:
                 c2.metric("Stop-Loss", f"${pos.get('Stop_Loss_Preis')}", delta_color="inverse")
                 c3.metric("Take-Profit", f"${pos.get('Take_Profit_Preis')}")
                 
-                # WICHTIG: Target-Preis anzeigen
                 target = float(pos.get('target_price') or 0.0)
                 if target > 0:
                     st.markdown(f"🎯 **Erwartetes Kursziel:** ${target:,.2f}")
@@ -127,7 +171,6 @@ with left_col:
     closed = [t for t in trades if isinstance(t, dict) and t.get("Status") == "CLOSED"]
     if closed:
         df = pd.DataFrame(closed)
-        # Logik für die Prognose-Qualität
         if "target_price" in df.columns and "Austrittspreis" in df.columns:
             df['Prognose erfüllt?'] = df.apply(
                 lambda row: "✅ JA" if abs(float(row.get('Austrittspreis', 0)) - float(row.get('target_price', 0))) < 1.0 else "❌ NEIN",
