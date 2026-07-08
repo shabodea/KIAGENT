@@ -5,6 +5,7 @@ import time
 import ccxt
 import yfinance as yf
 import numpy as np
+import requests  # <-- FEHLER BEHOBEN
 from agents.model_router import ModelRouter
 from database.supabase import send_chat_message, save_trade, close_trade
 from config.settings import SUPABASE_URL, HEADERS
@@ -19,12 +20,14 @@ MONITORED_ASSETS = [
 
 # --- HELFER: RSI BERECHNEN ---
 def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1: return 50
+    if len(prices) < period + 1:
+        return 50
     deltas = np.diff(prices)
     seed = deltas[:period+1]
     up = seed[seed >= 0].sum() / period
     down = -seed[seed < 0].sum() / period
-    if down == 0: return 100
+    if down == 0:
+        return 100
     rs = up / down
     return 100 - (100 / (1 + rs))
 
@@ -35,7 +38,8 @@ def get_asset_data(symbol):
             ticker = yf.Ticker(symbol)
             data_5m = ticker.history(period="2d", interval="5m")
             data_1h = ticker.history(period="5d", interval="1h")
-            if data_5m.empty: return None
+            if data_5m.empty:
+                return None
             last_price = data_5m['Close'].iloc[-1]
             return {
                 "symbol": symbol,
@@ -48,12 +52,13 @@ def get_asset_data(symbol):
             exchange = ccxt.kraken()
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
             ohlcv_5m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='5m', limit=50)
+            ohlcv_15m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='15m', limit=50)  # <-- KORRIGIERT
             ohlcv_1h = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='1h', limit=50)
             return {
                 "symbol": symbol,
                 "last": ticker['last'],
                 "closes_5m": [c[4] for c in ohlcv_5m],
-                "closes_15m": [c[4] for c in ohlcv_5m], # Für Krypto nehmen wir simple 15m
+                "closes_15m": [c[4] for c in ohlcv_15m],
                 "closes_1h": [c[4] for c in ohlcv_1h]
             }
     except Exception as e:
@@ -67,7 +72,6 @@ def get_entry_decision(market_data):
     rsi_15m = calculate_rsi(market_data['closes_15m'])
     rsi_1h = calculate_rsi(market_data['closes_1h'])
     
-    # KRITISCH: Der Prompt zwingt ihn zum Handeln, wenn eine Konfluenz vorliegt!
     prompt = f"""
     Du bist ein professioneller, aggressiver Scalper. Dein Job ist es, täglich viele kleine Trades zu gewinnen.
     
@@ -91,11 +95,13 @@ def get_entry_decision(market_data):
     answer, _ = router.route(prompt, system_context="Du antwortest NUR mit JSON.", preferred_model="groq")
     match = re.search(r'\{.*\}', answer, re.DOTALL)
     if match:
-        try: return json.loads(match.group(0))
-        except: pass
+        try:
+            return json.loads(match.group(0))
+        except:
+            pass
     return {"decision": "HOLD", "reasoning": "Fehler im JSON", "stop_loss": 0.0, "take_profit": 0.0}
 
-# --- NEU: POST-TRADE ANALYSE (DER BOT LERNT AUS JEDEM TRADE) ---
+# --- POST-TRADE ANALYSE (DER BOT LERNT AUS JEDEM TRADE) ---
 def analyze_learn(asset, entry_price, exit_price, pnl, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
     
@@ -111,8 +117,6 @@ def analyze_learn(asset, entry_price, exit_price, pnl, reasoning):
     
     router = ModelRouter()
     answer, _ = router.route(prompt, system_context="Du bist ein erfahrener Trading-Coach.", preferred_model="groq")
-    
-    # Speichere die Lektion im Gedächtnis (als System-Nachricht, damit das Dashboard es anzeigt)
     send_chat_message("system", f"📘 Lektion aus dem {profit_text}: {answer}")
 
 # --- HAUPTLOOP ---
@@ -126,7 +130,8 @@ def main_loop():
         try:
             for symbol in MONITORED_ASSETS:
                 data = get_asset_data(symbol)
-                if not data: continue
+                if not data:
+                    continue
                 
                 # Prüfen: Haben wir eine offene Position?
                 active_trades = requests.get(
@@ -147,7 +152,6 @@ def main_loop():
                         pnl = data['last'] - entry_price
                         close_trade(symbol, data['last'], pnl)
                         send_chat_message("system", f"⚡ {symbol}: Blitz-Exit! RSI {rsi_5m:.1f}. PnL: ${pnl:.2f}")
-                        # JETZT LERNT ER SOFORT DARAUS
                         analyze_learn(symbol, entry_price, data['last'], pnl, "RSI Overbought Exit")
                         continue
                 
@@ -171,9 +175,10 @@ def main_loop():
             # Chat
             if int(time.time()) % 5 == 0:
                 new_id = agent.process_live_chat(last_chat_id)
-                if new_id is not None: last_chat_id = new_id
+                if new_id is not None:
+                    last_chat_id = new_id
 
-            time.sleep(1) # Blitzschnelle Überprüfung
+            time.sleep(1)  # Blitzschnelle Überprüfung
         except Exception as e:
             print(f"❌ Fehler im Hauptloop: {e}", flush=True)
             time.sleep(10)
