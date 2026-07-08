@@ -10,6 +10,7 @@ from agents.model_router import ModelRouter
 from database.supabase import send_chat_message, save_trade, close_trade
 from config.settings import SUPABASE_URL, HEADERS
 
+# --- AKTUALISIERTE ASSET-LISTE (INKL. TAO & MIDNIGHT) ---
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRON-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
@@ -17,6 +18,7 @@ MONITORED_ASSETS = [
     "SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"
 ]
 
+# --- RSI BERECHNEN ---
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50
     deltas = np.diff(prices)
@@ -27,28 +29,35 @@ def calculate_rsi(prices, period=14):
     rs = up / down
     return 100 - (100 / (1 + rs))
 
+# --- ROBUSTE DATENABFRAGE (AKTIEN + KRYPTO) ---
 def get_asset_data(symbol):
     try:
         if symbol in ["SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"]:
-            # Versuche 5m -> 15m -> 1h (nie abbrechen)
-            data_5m = yf.download(symbol, period="2d", interval="5m", progress=False)
-            data_15m = yf.download(symbol, period="2d", interval="15m", progress=False)
+            # Aktien: Versuche 5m -> 15m -> 1h (niemals abbrechen)
+            data_5m = yf.download(symbol, period="1d", interval="5m", progress=False)
+            data_15m = yf.download(symbol, period="1d", interval="15m", progress=False)
             data_1h = yf.download(symbol, period="5d", interval="1h", progress=False)
             
             closes_5m = data_5m['Close'].tolist() if not data_5m.empty else []
             closes_15m = data_15m['Close'].tolist() if not data_15m.empty else []
             closes_1h = data_1h['Close'].tolist() if not data_1h.empty else []
             
+            # Falls 5m und 15m leer sind, nimm 1h für 5m- und 15m-Werte
+            if not closes_5m and not closes_15m:
+                closes_5m = closes_1h
+                closes_15m = closes_1h
+            
             last_price = data_5m['Close'].iloc[-1] if not data_5m.empty else (data_15m['Close'].iloc[-1] if not data_15m.empty else data_1h['Close'].iloc[-1])
             
             return {
                 "symbol": symbol,
                 "last": last_price,
-                "closes_5m": closes_5m if len(closes_5m) >= 15 else closes_15m if len(closes_15m) >= 15 else closes_1h,
+                "closes_5m": closes_5m if len(closes_5m) >= 15 else closes_15m,
                 "closes_15m": closes_15m if len(closes_15m) >= 15 else closes_1h,
-                "closes_1h": closes_1h if len(closes_1h) >= 10 else []
+                "closes_1h": closes_1h
             }
         else:
+            # Krypto über Kraken
             exchange = ccxt.kraken()
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
             ohlcv_5m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='5m', limit=50)
@@ -65,6 +74,7 @@ def get_asset_data(symbol):
         print(f"⚠️ Fehler bei {symbol}: {e}")
         return None
 
+# --- KI-ENTSCHEIDUNG ---
 def get_entry_decision(market_data):
     router = ModelRouter()
     rsi_5m = calculate_rsi(market_data['closes_5m'])
@@ -88,6 +98,7 @@ def get_entry_decision(market_data):
         except: pass
     return {"decision": "HOLD", "reasoning": "Fehler", "stop_loss": 0.0, "take_profit": 0.0}
 
+# --- LERNANALYSE ---
 def analyze_learn(asset, entry_price, exit_price, pnl, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
     prompt = f"Trade auf {asset} abgeschlossen mit {profit_text} von ${pnl:.2f}. Einstieg:{entry_price}, Ausstieg:{exit_price}. Lehre mich eine Lektion."
@@ -95,8 +106,9 @@ def analyze_learn(asset, entry_price, exit_price, pnl, reasoning):
     answer, _ = router.route(prompt, system_context="Du bist ein Trading-Coach.", preferred_model="groq")
     send_chat_message("system", f"📘 Lektion aus dem {profit_text}: {answer}")
 
+# --- HAUPTLOOP ---
 def main_loop():
-    print("🧠 KI-Scalper gestartet (Aktien mit Fallback). 24/7 aktiv.", flush=True)
+    print("🧠 KI-Scalper gestartet (22 Assets mit Fallback). 24/7 aktiv.", flush=True)
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
