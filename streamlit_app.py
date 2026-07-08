@@ -10,13 +10,15 @@ st.set_page_config(page_title="🦅 10x KI-Profi-Cockpit", layout="wide", initia
 st.markdown("""
     <style>
     .metric-card { background-color: #1e222d; padding: 18px; border-radius: 10px; border-left: 5px solid #00ff66; margin-bottom: 15px; }
-    .signal-buy { background-color: #1a3b1a; color: #00ff66; font-weight: bold; padding: 5px 10px; border-radius: 5px; text-align: center;}
-    .signal-sell { background-color: #3b1a1a; color: #ff4d4d; font-weight: bold; padding: 5px 10px; border-radius: 5px; text-align: center;}
-    .signal-hold { background-color: #2a2a2a; color: #888888; font-weight: bold; padding: 5px 10px; border-radius: 5px; text-align: center;}
+    .dataframe th { font-size: 12px; }
+    .dataframe td { font-size: 12px; }
+    .signal-buy { background-color: #1a3b1a; color: #00ff66; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
+    .signal-sell { background-color: #3b1a1a; color: #ff4d4d; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
+    .signal-hold { background-color: #2a2a2a; color: #888888; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- KRAKEN-ASSETS ---
+# --- KRAKEN-ASSETS (19 Stück) ---
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRX-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
@@ -33,6 +35,7 @@ def calculate_rsi(prices, period=14):
     rs = up / down
     return 100 - (100 / (1 + rs))
 
+# --- DATEN INKL. ORDERBUCH ABRUFEN ---
 @st.cache_data(ttl=15)
 def get_market_overview(assets):
     results = []
@@ -40,40 +43,48 @@ def get_market_overview(assets):
         exchange = ccxt.kraken()
         for symbol in assets:
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
-            ohlcv_5m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='5m', limit=50)
-            ohlcv_15m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='15m', limit=50)
-            ohlcv_1h = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='1h', limit=50)
+            orderbook = exchange.fetch_order_book(symbol.replace("-", "/"), limit=5)
             
-            rsi_5m = calculate_rsi([c[4] for c in ohlcv_5m])
-            rsi_15m = calculate_rsi([c[4] for c in ohlcv_15m])
-            rsi_1h = calculate_rsi([c[4] for c in ohlcv_1h])
-            
-            # Einfache Empfehlung für das Dashboard
-            if rsi_5m < 30 and rsi_15m < 40:
-                signal = "LONG"
-                color_class = "signal-buy"
-            elif rsi_5m > 70 and rsi_15m > 60:
-                signal = "SHORT"
-                color_class = "signal-sell"
-            else:
-                signal = "WARTEN"
-                color_class = "signal-hold"
-            
-            results.append({
+            # Orderbuch-Analyse (Unterstützung / Widerstand)
+            best_bid = orderbook['bids'][0][0] if orderbook['bids'] else 0
+            best_ask = orderbook['asks'][0][0] if orderbook['asks'] else 0
+            orderbook_text = f"Unterstützung: ${best_bid:,.2f} | Widerstand: ${best_ask:,.2f}" if best_bid and best_ask else "Orderbuch lädt..."
+
+            # Daten für 5 Zeitfenster holen
+            timeframes = ['5m', '15m', '1h', '4h', '1d']
+            row = {
                 "Asset": symbol,
                 "Kurs": f"${ticker['last']:,.2f}",
-                "RSI 5m": f"{rsi_5m:.1f}",
-                "RSI 15m": f"{rsi_15m:.1f}",
-                "RSI 1h": f"{rsi_1h:.1f}",
-                "Empfehlung": signal,
-                "Class": color_class
-            })
-    except: pass
+                "Orderbuch": orderbook_text
+            }
+            
+            for tf in timeframes:
+                ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
+                if not ohlcv: 
+                    row[f"{tf}_RSI"] = "N/A"
+                    row[f"{tf}_Sig"] = "N/A"
+                    continue
+                closes = [c[4] for c in ohlcv]
+                rsi = calculate_rsi(closes)
+                
+                if rsi < 30: sig = "LONG"
+                elif rsi > 70: sig = "SHORT"
+                else: sig = "WARTEN"
+                
+                row[f"{tf}_RSI"] = f"{rsi:.1f}"
+                row[f"{tf}_Sig"] = sig
+            
+            results.append(row)
+    except Exception as e:
+        st.error(f"Fehler beim Abrufen der Marktdaten: {e}")
+    
     return pd.DataFrame(results) if results else pd.DataFrame()
 
+# --- DATEN ABRUFEN ---
 trades, chat, risiko, knowledge = get_all_data_live()
+df_market = get_market_overview(MONITORED_ASSETS)
 
-# --- METRIKEN (inkl. 10x Hebel Anzeige) ---
+# --- METRIKEN ---
 guthaben = 200.0
 win_trades, loss_trades = 0, 0
 if isinstance(trades, list) and len(trades) > 0:
@@ -87,33 +98,38 @@ total = win_trades + loss_trades
 win_rate = (win_trades / total * 100) if total > 0 else 0.0
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("💰 Depotwert", f"${guthaben:.2f}", help="Startkapital 200€, 10x Hebel")
+col1.metric("💰 Depotwert", f"${guthaben:.2f}")
 col2.metric("📊 Trefferquote", f"{win_rate:.1f}%")
 col3.metric("🛡️ Risiko-Status", "NORMAL" if guthaben > 180 else "KRITISCH")
 col4.metric("⚡ Hebel", "10x FIX")
 
 st.markdown("---")
+st.subheader(f"🔥 Live-Übersicht: Signale, RSI & Orderbuch-Abpraller")
 
-# --- 🔥 SCHNELLÜBERSICHT (EMPFEHLUNGEN FÜR ALLE ASSETS) ---
-st.subheader("🔥 Live-Empfehlungen (Long / Short / Warten)")
-df_signal = get_market_overview(MONITORED_ASSETS)
-
-if not df_signal.empty:
-    # Wir nutzen HTML, um die farbigen Buttons anzuzeigen
-    for index, row in df_signal.iterrows():
-        cols = st.columns([2, 2, 1.5, 1.5, 1.5, 2])
-        cols[0].markdown(f"**{row['Asset']}**")
-        cols[1].markdown(f"**{row['Kurs']}**")
-        cols[2].caption(f"5m: {row['RSI 5m']}")
-        cols[3].caption(f"15m: {row['RSI 15m']}")
-        cols[4].caption(f"1h: {row['RSI 1h']}")
-        cols[5].markdown(
-            f"<div class='{row['Class']}'>{row['Empfehlung']}</div>",
-            unsafe_allow_html=True
-        )
-    st.markdown("---")
+# --- TABELLE MIT ALLEN DATEN & FARBEN ---
+if not df_market.empty:
+    def highlight_signals(val):
+        if "LONG" in str(val): return "background-color: #1a3b1a; color: #00ff66; font-weight: bold;"
+        elif "SHORT" in str(val): return "background-color: #3b1a1a; color: #ff4d4d; font-weight: bold;"
+        elif "WARTEN" in str(val): return "background-color: #2a2a2a; color: #888888;"
+        return ""
+    
+    signal_cols = [f"{tf}_Sig" for tf in ['5m', '15m', '1h', '4h', '1d']]
+    styled_df = df_market.style.map(highlight_signals, subset=signal_cols)
+    
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=600,
+        column_config={
+            "Orderbuch": st.column_config.TextColumn("Orderbuch (Stütze/Widerstand)")
+        }
+    )
 else:
-    st.info("Warte auf Marktdaten...")
+    st.info("Marktdaten werden geladen...")
+
+st.markdown("---")
 
 # --- UNTERER BEREICH (GEDANKEN, AKTIVE POSITIONEN, CHAT) ---
 left_col, right_col = st.columns([2, 1])
