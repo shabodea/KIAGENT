@@ -5,7 +5,7 @@ import ccxt
 import numpy as np
 from database.supabase import get_all_data_live, send_chat_message
 
-st.set_page_config(page_title="🦅 KI-Learning-Cockpit", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="🦅 ML-Learning-Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -46,7 +46,6 @@ def get_market_overview(assets):
                 try:
                     ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
                     if ohlcv:
-                        # RSI für den gesamten Datensatz berechnen, um den Trend zu erkennen
                         closes = [c[4] for c in ohlcv]
                         rsi_values = []
                         for i in range(len(closes)):
@@ -102,53 +101,73 @@ st.subheader(f"📊 Live-Übersicht (Alle Assets & Signale)")
 df_market = get_market_overview(MONITORED_ASSETS)
 
 if not df_market.empty:
-    # Styling-Funktion für Signale und RSI-Trends
     def highlight_cells(val):
-        # Signal-Farben
         if "LONG" in str(val):
             return "background-color: #1a3b1a; color: #00ff66; font-weight: bold;"
         elif "SELL" in str(val):
             return "background-color: #3b1a1a; color: #ff4d4d; font-weight: bold;"
         elif "HOLD" in str(val):
             return "background-color: #2a2a2a; color: #ffcc00; font-weight: bold;"
-        
-        # RSI-Trend-Farben
         if "⬆️" in str(val):
             return "color: #00ff66; font-weight: bold;"
         elif "⬇️" in str(val):
             return "color: #ff4d4d; font-weight: bold;"
         elif "N/A" in str(val):
             return "color: #555555;"
-            
         return ""
     
     signal_cols = [f"{tf}_Sig" for tf in ['5m', '15m', '1h', '4h', '1d']]
     rsi_cols = [f"{tf}_RSI" for tf in ['5m', '15m', '1h', '4h', '1d']]
     
     styled_df = df_market.style.map(highlight_cells, subset=signal_cols + rsi_cols)
-    
-    st.dataframe(
-        styled_df,
-        use_container_width=True,
-        hide_index=True,
-        height=600
-    )
+    st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
 else:
     st.info("Marktdaten werden geladen...")
 
 st.markdown("---")
-left_col, right_col = st.columns([2, 1])
 
+# --- ML-ANALYSE: WELCHER RSI BRINGT GEWINNE? ---
+st.subheader("🧠 ML-Einblicke: Welche RSI-Werte bringen Gewinn?")
+if isinstance(trades, list) and len(trades) > 0:
+    closed = [t for t in trades if isinstance(t, dict) and t.get("Status") == "CLOSED"]
+    if closed:
+        df_closed = pd.DataFrame(closed)
+        if "net_pnl" in df_closed.columns and "Indikatoren_Setup" in df_closed.columns:
+            # Extrahiere den 5m RSI aus den Indikatoren (Format: 5m:45.1, 15m:...)
+            def extract_5m_rsi(ind_str):
+                if not ind_str: return 50
+                parts = ind_str.split(',')
+                for p in parts:
+                    if '5m' in p:
+                        try: return float(p.split(':')[1])
+                        except: return 50
+                return 50
+            
+            df_closed['5m_RSI_Entry'] = df_closed['Indikatoren_Setup'].apply(extract_5m_rsi)
+            
+            wins = df_closed[df_closed['net_pnl'] > 0]
+            losses = df_closed[df_closed['net_pnl'] < 0]
+            
+            avg_win_rsi = wins['5m_RSI_Entry'].mean() if not wins.empty else 0
+            avg_loss_rsi = losses['5m_RSI_Entry'].mean() if not losses.empty else 0
+            
+            c1, c2 = st.columns(2)
+            c1.metric("📈 Durchschnittlicher RSI bei Gewinnen", f"{avg_win_rsi:.1f}", delta="Gut")
+            c2.metric("📉 Durchschnittlicher RSI bei Verlusten", f"{avg_loss_rsi:.1f}", delta="Schlecht", delta_color="inverse")
+            
+            st.caption(f"💡 Der Bot lernt: Für diese Assets liegt die optimale Gewinnzone bei einem RSI von ca. {avg_win_rsi:.1f}. Die Verlustzone liegt bei {avg_loss_rsi:.1f}. Das ist maschinelles Lernen in Echtzeit!")
+
+left_col, right_col = st.columns([2, 1])
 with left_col:
     st.subheader("🧠 Selbst-Reflexion des Bots")
     if isinstance(chat, list):
-        sys_msgs = [m for m in chat if m.get("role") == "system" and "🤔" in m.get("content", "")]
+        sys_msgs = [m for m in chat if m.get("role") == "system" and "📘" in m.get("content", "")]
         if sys_msgs:
             st.info(sys_msgs[-1].get("content", ""))
         else:
-            st.write("Der Bot wertet gerade seine Trades aus...")
+            st.write("Der Bot sammelt gerade riesige Datenmengen...")
 
-    st.subheader("📊 Aktive Positionen (mit Prognosen)")
+    st.subheader("📊 Aktive Positionen")
     active = [t for t in trades if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades, list) else []
     if active:
         for pos in active:
@@ -157,32 +176,10 @@ with left_col:
                 c1.metric("Einstieg", f"${pos.get('Eintrittspreis')}")
                 c2.metric("Stop-Loss", f"${pos.get('Stop_Loss_Preis')}", delta_color="inverse")
                 c3.metric("Take-Profit", f"${pos.get('Take_Profit_Preis')}")
-                
                 target = float(pos.get('target_price') or 0.0)
-                if target > 0:
-                    st.markdown(f"🎯 **Erwartetes Kursziel:** ${target:,.2f}")
-                else:
-                    st.markdown(f"🎯 **Erwartetes Kursziel:** *Wird vom Bot berechnet...*")
-                st.info(f"💡 Begründung: {pos.get('Begründung', 'Analyse läuft...')}")
+                st.markdown(f"🎯 **Erwartetes Kursziel:** ${target:,.2f}")
     else:
-        st.success("✅ Keine offenen Positionen.")
-
-    st.subheader("📜 Geschlossene Trades (Lern-Tabelle)")
-    closed = [t for t in trades if isinstance(t, dict) and t.get("Status") == "CLOSED"]
-    if closed:
-        df = pd.DataFrame(closed)
-        if "target_price" in df.columns and "Austrittspreis" in df.columns:
-            df['Prognose erfüllt?'] = df.apply(
-                lambda row: "✅ JA" if abs(float(row.get('Austrittspreis', 0)) - float(row.get('target_price', 0))) < 1.0 else "❌ NEIN",
-                axis=1
-            )
-            cols = ["Vermögenswert", "Richtung", "Eintrittspreis", "target_price", "Austrittspreis", "net_pnl", "Prognose erfüllt?"]
-            available_cols = [c for c in cols if c in df.columns]
-            st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(df, use_container_width=True)
-    else:
-        st.caption("Noch keine abgeschlossenen Trades in der Historie.")
+        st.success("✅ Keine offenen Positionen. Er sammelt im Hintergrund Daten.")
 
 with right_col:
     st.subheader("💬 Live-Diskurs")
@@ -208,4 +205,4 @@ if prompt:
         st.cache_data.clear()
         st.rerun()
 
-st.caption("⚙️ Modus: Learning-Cockpit | 24/7 Selbstreflektion aktiv")
+st.caption("⚙️ Modus: ML-Exploration | 2% Risiko pro Trade | Datenbasiertes Lernen")
