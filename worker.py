@@ -12,7 +12,7 @@ from config.settings import SUPABASE_URL, HEADERS
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRX-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
-    "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "NIGHT-USD"  # <-- Korrigiert
+    "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "NIGHT-USD"  
 ]
 
 def calculate_rsi(prices, period=14):
@@ -35,8 +35,7 @@ def get_current_balance():
             total_pnl = sum(float(t.get('net_pnl', 0.0)) for t in resp)
             return 200.0 + total_pnl
         return 200.0
-    except Exception as e:
-        print(f"⚠️ Fehler beim Guthaben: {e}")
+    except:
         return 200.0
 
 def get_asset_data(symbol):
@@ -56,8 +55,7 @@ def get_asset_data(symbol):
             "closes_4h": data['4h'],
             "closes_1d": data['1d']
         }
-    except Exception as e:
-        print(f"⚠️ Fehler bei {symbol}: {e}")
+    except:
         return None
 
 def get_performance_summary(symbol):
@@ -66,8 +64,7 @@ def get_performance_summary(symbol):
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=net_pnl&Vermögenswert=eq.{symbol}&Status=eq.CLOSED&order=id.desc&limit=3",
             headers=HEADERS
         ).json()
-        if not isinstance(resp, list) or len(resp) == 0: 
-            return "No history."
+        if not isinstance(resp, list) or len(resp) == 0: return "No history."
         wins = sum(1 for t in resp if t.get('net_pnl', 0.0) > 0)
         return f"Win {wins}/{len(resp)} trades."
     except:
@@ -80,34 +77,35 @@ def get_entry_decision(market_data, balance):
     rsi_1h = calculate_rsi(market_data['closes_1h'])
     history = get_performance_summary(market_data['symbol'])
     
+    # EXTREM KURZER PROMPT (Minimale Token) für Gemini, damit wir schnell sind!
     prompt = f"""
-    {balance:.0f}€, 10x Hebel. 
-    {market_data['symbol']} at {market_data['last']}. 5m RSI:{rsi_5m:.1f}, 15m:{rsi_15m:.1f}, 1h:{rsi_1h:.1f}.
-    History: {history}. 
-    BUY if 5m/15m oversold & 1h neutral. SELL if overbought. Else HOLD.
-    JSON: {{"decision":"BUY"/"SELL"/"HOLD", "reasoning":"...", "sl":0.0, "tp":0.0}}
+    {market_data['symbol']} {market_data['last']} | RSI 5m:{rsi_5m:.1f} 15m:{rsi_15m:.1f} 1h:{rsi_1h:.1f} | Hist:{history}.
+    Entscheide BUY, SELL oder HOLD. 
+    JSON: {{"d":"BUY"/"SELL"/"HOLD","r":"Kurze Begründung","sl":0.0,"tp":0.0}}
     """
-    answer, _ = router.route(prompt, system_context="NUR JSON.", preferred_model="groq")
+    # Entscheidung läuft jetzt über GEMINI (Groq wird geschont)
+    answer, _ = router.route(prompt, system_context="NUR JSON.", preferred_model="gemini")
     match = re.search(r'\{.*\}', answer, re.DOTALL)
     if match:
         try: return json.loads(match.group(0))
         except: pass
-    return {"decision": "HOLD", "reasoning": "API Limit", "sl": 0.0, "tp": 0.0}
+    return {"d": "HOLD", "r": "Limit", "sl": 0.0, "tp": 0.0}
 
 def analyze_learn(asset, entry_price, exit_price, pnl, margin, reasoning):
     profit_text = "GEWINN" if pnl > 0 else "VERLUST"
-    prompt = f"Trade {asset} {profit_text} ${pnl:.2f}. Lehre mich eine 1-Satz-Lektion."
+    prompt = f"Trade {asset} {profit_text} ${pnl:.2f}. Lehre mich eine 1-Satz-Lektion fürs Scalping."
     router = ModelRouter()
-    answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="gemini")
+    # Lektionen generiert GROQ (weil wir die teuren Token nur fürs Lernen nutzen)
+    answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="groq")
     send_chat_message("system", f"📘 Lektion: {answer}")
 
 def main_loop():
-    print("🧠 Langsam-Modus gestartet (10-Minuten-Takt). API-Limits werden geschont.", flush=True)
+    print("⚡ High-Frequency Modus aktiv (15s pro Asset). Keine Limit-Bremsen mehr.", flush=True)
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
     last_api_call = {asset: 0 for asset in MONITORED_ASSETS}
-    COOLDOWN_TRADING = 600  # 10 Minuten
+    COOLDOWN_TRADING = 15  # Nur 15 Sekunden warten, dann wieder checken!
 
     while True:
         try:
@@ -150,20 +148,20 @@ def main_loop():
                     decision = get_entry_decision(data, balance)
                     last_api_call[symbol] = time.time()
                     
-                    if decision['decision'] in ['BUY', 'SELL']:
+                    if decision['d'] in ['BUY', 'SELL']:
                         save_trade(
-                            asset=symbol, direction=decision['decision'],
+                            asset=symbol, direction=decision['d'],
                             entry_price=data['last'], sl=decision.get('sl', 0.0),
-                            tp=decision.get('tp', 0.0), reasoning=decision.get('reasoning', 'KI'),
+                            tp=decision.get('tp', 0.0), reasoning=decision.get('r', 'KI'),
                             indicators=f"5m RSI:{rsi_5m:.1f}",
                             expected_move='Scalp', margin_usd=margin_per_trade, leverage=10, status='ACTIVE'
                         )
 
-            if int(time.time()) % 30 == 0:
+            if int(time.time()) % 15 == 0:  # Chat schneller abrufen
                 new_id = agent.process_live_chat(last_chat_id)
                 if new_id is not None: last_chat_id = new_id
 
-            time.sleep(5)
+            time.sleep(2)  # Hauptschleife ist extrem flüssig
         except Exception as e:
             print(f"❌ Fehler im Hauptloop: {e}", flush=True)
             time.sleep(30)
