@@ -75,16 +75,22 @@ def get_entry_decision(market_data, balance):
     rsi_5m = calculate_rsi(market_data['closes_5m'])
     rsi_15m = calculate_rsi(market_data['closes_15m'])
     rsi_1h = calculate_rsi(market_data['closes_1h'])
+    rsi_4h = calculate_rsi(market_data['closes_4h'])
+    rsi_1d = calculate_rsi(market_data['closes_1d'])
     history = get_performance_summary(market_data['symbol'])
     
-    # Wir fordern jetzt zusätzlich eine Prognose und Begründung an
+    # WICHTIG: Scalping-Fokus & Gebühren-Bewusstsein
     prompt = f"""
-    {market_data['symbol']} {market_data['last']:.0f} | 5m RSI:{rsi_5m:.0f} 15m:{rsi_15m:.0f} 1h:{rsi_1h:.0f}
-    Hist: {history}
-    Entscheide BUY/SELL/HOLD. Wenn BUY oder SELL, gib auch einen erwarteten Kurs an (target price).
-    JSON: {{"d":"BUY"/"SELL"/"HOLD","r":"Begründung","sl":0,"tp":0,"target":0}}
+    {market_data['symbol']} {market_data['last']:.0f}. 
+    5m RSI:{rsi_5m:.0f}, 15m:{rsi_15m:.0f}, 1h:{rsi_1h:.0f}, 4h:{rsi_4h:.0f}, 1d:{rsi_1d:.0f}.
+    Hist: {history}.
+    
+    Ziel: Scalping. Kleine, schnelle Gewinne sammeln.
+    Wichtig: Kraken Taker-Gebühr beträgt 0.1%. Kalkuliere den Break-even. Handele nur, wenn die erwartete Bewegung die 0.1% Gebühr locker übersteigt.
+    
+    Entscheide BUY/SELL/HOLD. JSON: {{"d":"BUY"/"SELL"/"HOLD","r":"Begründung in 2 Sätzen","sl":0,"tp":0,"target":0}}
     """
-    answer, _ = router.route(prompt, system_context="NUR JSON.", preferred_model="deepseek")
+    answer, _ = router.route(prompt, system_context="NUR JSON. Max 50 Token Antwort.", preferred_model="deepseek")
     match = re.search(r'\{.*\}', answer, re.DOTALL)
     if match:
         try: return json.loads(match.group(0))
@@ -97,14 +103,15 @@ def analyze_learn(asset, entry_price, exit_price, pnl, margin, reasoning, target
     prompt = f"""
     Trade {asset} {profit_text} ${pnl:.2f}. 
     Prognose: Kurs sollte {target_price} erreichen. Ergebnis: {hit_text}.
-    Gib mir eine kurze Lektion, warum ich falsch oder richtig lag, und was ich beim nächsten Mal besser machen kann.
+    Ist die 0.1% Gebühr schuld am kleinen Verlust? 
+    Gib mir 1 Satz Lektion für meine Scalping-Strategie.
     """
     router = ModelRouter()
     answer, _ = router.route(prompt, system_context="Du bist ein Coach.", preferred_model="deepseek")
     send_chat_message("system", f"📘 Lektion: {answer}")
 
 def main_loop():
-    print("⚡ DeepSeek-Only mit Prognose-Lernen (15s pro Asset).", flush=True)
+    print("⚡ DeepSeek-Scalper aktiv (Gebührenbewusst, Small Profits). 15s pro Asset.", flush=True)
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
@@ -131,7 +138,7 @@ def main_loop():
                 has_position = False
                 entry_price = 0.0
                 direction = "HOLD"
-                target_price = 0.0  # Erwarteter Kurs aus der Prognose
+                target_price = 0.0
                 if isinstance(active_trades, list) and len(active_trades) > 0:
                     first_trade = active_trades[0]
                     if isinstance(first_trade, dict) and 'Eintrittspreis' in first_trade:
@@ -147,10 +154,10 @@ def main_loop():
                     exit_price = data['last']
                     pnl = (exit_price - entry_price) / entry_price * margin_per_trade * 10
                     if direction == 'SELL': pnl *= -1
-                    # Prüfen, ob die Prognose eingetroffen ist
+                    # Prognose-Check
                     if direction == 'BUY':
                         hit = exit_price >= target_price
-                    else:  # SELL
+                    else:
                         hit = exit_price <= target_price
                     close_trade(symbol, exit_price, pnl)
                     analyze_learn(symbol, entry_price, exit_price, pnl, margin_per_trade, "Exit", target_price, hit)
@@ -168,13 +175,13 @@ def main_loop():
                             entry_price=data['last'],
                             stop_loss=decision.get('sl', 0.0),
                             take_profit=decision.get('tp', 0.0),
-                            reasoning=decision.get('r', 'KI'),
-                            indicators=f"5m RSI:{rsi_5m:.1f}",
-                            expected_move='Scalp',
+                            reasoning=decision.get('r', 'Scalping'),
+                            indicators=f"5m:{rsi_5m:.1f}, 15m:{rsi_15m:.1f}, 1h:{rsi_1h:.1f}",
+                            expected_move='Scalp (Small Profit)',
                             margin_usd=margin_per_trade,
                             leverage=10,
                             status='ACTIVE',
-                            target_price=target  # NEU: Speichern der Prognose
+                            target_price=target
                         )
 
             if int(time.time()) % 15 == 0:
