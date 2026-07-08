@@ -5,18 +5,16 @@ import ccxt
 import numpy as np
 from database.supabase import get_all_data_live, send_chat_message
 
-st.set_page_config(page_title="🦅 10x KI-Profi-Cockpit (Prognose-Lernen)", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🦅 KI-Profi-Cockpit (5-TF-Übersicht)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
     .metric-card { background-color: #1e222d; padding: 18px; border-radius: 10px; border-left: 5px solid #00ff66; margin-bottom: 15px; }
-    .dataframe th { font-size: 12px; }
-    .dataframe td { font-size: 12px; }
-    .signal-buy { background-color: #1a3b1a; color: #00ff66; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
-    .signal-sell { background-color: #3b1a1a; color: #ff4d4d; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
-    .signal-hold { background-color: #2a2a2a; color: #888888; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
-    .prognosis-hit { color: #00ff66; font-weight: bold; }
-    .prognosis-miss { color: #ff4d4d; font-weight: bold; }
+    .table-container { font-size: 13px; }
+    .signal-buy { background-color: #1a3b1a; color: #00ff66; font-weight: bold; padding: 3px 8px; border-radius: 4px; text-align: center;}
+    .signal-sell { background-color: #3b1a1a; color: #ff4d4d; font-weight: bold; padding: 3px 8px; border-radius: 4px; text-align: center;}
+    .signal-hold { background-color: #2a2a2a; color: #888888; font-weight: bold; padding: 3px 8px; border-radius: 4px; text-align: center;}
+    .dataframe th { background-color: #1e222d !important; color: #ffffff !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -43,33 +41,42 @@ def get_market_overview(assets):
         exchange = ccxt.kraken()
         for symbol in assets:
             ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
-            ohlcv_5m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='5m', limit=50)
-            ohlcv_15m = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='15m', limit=50)
-            ohlcv_1h = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='1h', limit=50)
-            rsi_5m = calculate_rsi([c[4] for c in ohlcv_5m])
-            rsi_15m = calculate_rsi([c[4] for c in ohlcv_15m])
-            rsi_1h = calculate_rsi([c[4] for c in ohlcv_1h])
+            orderbook = exchange.fetch_order_book(symbol.replace("-", "/"), limit=5)
             
-            if rsi_5m < 30 and rsi_15m < 40:
-                signal = "LONG"
-                color_class = "signal-buy"
-            elif rsi_5m > 70 and rsi_15m > 60:
-                signal = "SHORT"
-                color_class = "signal-sell"
-            else:
-                signal = "WARTEN"
-                color_class = "signal-hold"
+            # Orderbuch Unterstützung (Stütze) & Widerstand
+            support = orderbook['bids'][0][0] if orderbook['bids'] else 0.0
+            resistance = orderbook['asks'][0][0] if orderbook['asks'] else 0.0
             
-            results.append({
-                "Asset": symbol,
-                "Kurs": f"${ticker['last']:,.2f}",
-                "RSI 5m": f"{rsi_5m:.1f}",
-                "RSI 15m": f"{rsi_15m:.1f}",
-                "RSI 1h": f"{rsi_1h:.1f}",
-                "Empfehlung": signal,
-                "Class": color_class
-            })
-    except: pass
+            # Daten für 5 Zeitfenster holen
+            row = {
+                "Symbol": symbol,
+                "Kurs (USD)": f"${ticker['last']:,.2f}",
+                "24h Trend": f"{ticker.get('percentage', 0):.2f}%",
+                "Stütze": f"${support:,.2f}",
+                "Widerstand": f"${resistance:,.2f}"
+            }
+            
+            timeframes = ['5m', '15m', '1h', '4h', '1d']
+            for tf in timeframes:
+                try:
+                    ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
+                    if not ohlcv:
+                        row[f"{tf}_RSI"] = "N/A"
+                        row[f"{tf}_Sig"] = "N/A"
+                        continue
+                    closes = [c[4] for c in ohlcv]
+                    rsi = calculate_rsi(closes)
+                    sig = "LONG" if rsi < 30 else ("SHORT" if rsi > 70 else "WARTEN")
+                    row[f"{tf}_RSI"] = f"{rsi:.1f}"
+                    row[f"{tf}_Sig"] = sig
+                except Exception:
+                    row[f"{tf}_RSI"] = "N/A"
+                    row[f"{tf}_Sig"] = "N/A"
+            
+            results.append(row)
+    except Exception as e:
+        st.error(f"Fehler beim Datenabruf: {e}")
+    
     return pd.DataFrame(results) if results else pd.DataFrame()
 
 trades, chat, risiko, knowledge = get_all_data_live()
@@ -77,9 +84,6 @@ trades, chat, risiko, knowledge = get_all_data_live()
 # --- METRIKEN ---
 guthaben = 200.0
 win_trades, loss_trades = 0, 0
-prognosen_hit = 0
-prognosen_total = 0
-
 if isinstance(trades, list) and len(trades) > 0:
     for t in trades:
         if isinstance(t, dict) and t.get("Status") == "CLOSED":
@@ -87,9 +91,6 @@ if isinstance(trades, list) and len(trades) > 0:
             guthaben += pnl
             if pnl > 0: win_trades += 1
             else: loss_trades += 1
-            # Prognose-Auswertung (wir haben ein Feld target_price, aber kein hit-Feld – wir berechnen es neu)
-            # Da wir kein hit-Feld in der DB haben, können wir es hier nur für geschlossene Trades berechnen, wenn wir target_price und exit_price hätten.
-            # Aber wir haben exit_price nicht. Daher lassen wir die Prognose-Trefferquote vorerst aus.
 total = win_trades + loss_trades
 win_rate = (win_trades / total * 100) if total > 0 else 0.0
 
@@ -101,38 +102,42 @@ col4.metric("⚡ Hebel", "10x FIX")
 
 st.markdown("---")
 
-# --- LIVE-ÜBERSICHT ---
-st.subheader(f"🔥 Live-Übersicht: Signale & RSI")
+# --- MARKTÜBERSICHT (5 ZEITFENSTER, ORDERBUCH, KURS, TREND) ---
+st.subheader(f"📊 Live-Übersicht ({len(MONITORED_ASSETS)} Assets)")
 df_market = get_market_overview(MONITORED_ASSETS)
+
 if not df_market.empty:
+    def highlight_signals(val):
+        if "LONG" in str(val): return "background-color: #1a3b1a; color: #00ff66; font-weight: bold;"
+        elif "SHORT" in str(val): return "background-color: #3b1a1a; color: #ff4d4d; font-weight: bold;"
+        elif "WARTEN" in str(val): return "background-color: #2a2a2a; color: #888888;"
+        return ""
+    
+    signal_cols = [f"{tf}_Sig" for tf in ['5m', '15m', '1h', '4h', '1d']]
+    styled_df = df_market.style.map(highlight_signals, subset=signal_cols)
+    
     st.dataframe(
-        df_market.style.map(
-            lambda val: "background-color: #1a3b1a; color: #00ff66; font-weight: bold;" if "LONG" in str(val) 
-            else ("background-color: #3b1a1a; color: #ff4d4d; font-weight: bold;" if "SHORT" in str(val) 
-            else "background-color: #2a2a2a; color: #888888;"),
-            subset=["Empfehlung"]
-        ),
+        styled_df,
         use_container_width=True,
         hide_index=True,
-        height=400
+        height=600
     )
 else:
-    st.info("Marktdaten werden geladen...")
+    st.info("Marktdaten werden geladen... (Kraken 24/7)")
 
 st.markdown("---")
 
-# --- HAUPTBEREICH ---
+# --- UNTERER BEREICH: TRADES, GEDANKEN, CHAT ---
 left_col, right_col = st.columns([2, 1])
 with left_col:
-    st.subheader("🧠 Live-Denkprotokoll")
+    st.subheader("🧠 Live-Denkprotokoll & Lektionen")
     if isinstance(chat, list):
         sys_msgs = [m for m in chat if m.get("role") == "system"]
         if sys_msgs:
             st.markdown(f"<div style='background:#0c0d14; padding:15px; border-radius:8px; height:200px; overflow-y:scroll;'>{sys_msgs[-1].get('content', '')}</div>", unsafe_allow_html=True)
-        else:
-            st.info("Der Bot denkt noch...")
+        else: st.info("Der Bot denkt gerade über die nächsten Trades nach...")
 
-    st.subheader("📊 Handelsplatz – Aktive Positionen (mit Prognose)")
+    st.subheader("📊 Aktive Positionen & Prognosen")
     active = [t for t in trades if isinstance(t, dict) and t.get("Status") == "ACTIVE"] if isinstance(trades, list) else []
     if active:
         for pos in active:
@@ -141,31 +146,28 @@ with left_col:
                 c1.metric("Einstieg", f"${pos.get('Eintrittspreis')}")
                 c2.metric("Stop-Loss", f"${pos.get('Stop_Loss_Preis')}", delta_color="inverse")
                 c3.metric("Take-Profit", f"${pos.get('Take_Profit_Preis')}")
-                st.markdown(f"**🎯 Erwarteter Kurs (Prognose):** ${pos.get('target_price', 0):.2f}")
+                st.markdown(f"🎯 **Erwartete Bewegung (Ziel):** ${pos.get('target_price', 0):.2f}")
                 st.info(f"💡 **Warum {pos.get('Richtung')}?** {pos.get('Begründung', 'Analyse läuft...')}")
-                st.caption(f"⚙️ Indikatoren: {pos.get('Indikatoren_Setup', '–')}")
+                st.caption(f"⚙️ Indikatoren: {pos.get('Indikatoren_Setup', '–')} | Gebühr 0.1% berücksichtigt")
     else:
-        st.success("✅ Keine offenen Positionen.")
+        st.success("✅ Keine offenen Positionen. Er wartet auf das perfekte Setup, um kleine Gewinne einzufahren.")
 
-    st.subheader("📜 Letzte abgeschlossene Trades")
+    st.subheader("📜 Letzte geschlossene Trades (Prognose-Check)")
     closed = [t for t in trades if isinstance(t, dict) and t.get("Status") == "CLOSED"]
     if closed:
-        # Wir zeigen: Vermögenswert, Richtung, Einstieg, Prognose (target_price), PnL, und ob die Prognose eingetroffen ist (schätzen wir aus PnL)
-        # Hinweis: Wir haben kein Hit-Feld in der DB, also nutzen wir den PnL als Indikator: Wenn Gewinn, dann war die Prognose wahrscheinlich gut.
         df = pd.DataFrame(closed)
-        # Wir fügen eine Spalte "Prognose erfüllt?" hinzu: Wenn PnL > 0, dann "Ja" (vereinfacht)
         if "net_pnl" in df.columns and "target_price" in df.columns:
-            df["Prognose erfüllt?"] = df.apply(lambda row: "✅ Ja" if row.get("net_pnl", 0) > 0 else "❌ Nein", axis=1)
-            cols = ["Vermögenswert", "Richtung", "Eintrittspreis", "target_price", "net_pnl", "Prognose erfüllt?", "Begründung"]
+            df["Prognose getroffen?"] = df.apply(lambda row: "✅ Ja" if row.get("net_pnl", 0) > 0 else "❌ Nein", axis=1)
+            cols = ["Vermögenswert", "Richtung", "Eintrittspreis", "target_price", "net_pnl", "Prognose getroffen?", "Begründung"]
             available_cols = [c for c in cols if c in df.columns]
             st.dataframe(df[available_cols].sort_index(ascending=False), use_container_width=True, hide_index=True)
         else:
             st.dataframe(df, use_container_width=True)
     else:
-        st.caption("Noch keine abgeschlossenen Trades.")
+        st.caption("Noch keine abgeschlossenen Trades in der Historie.")
 
 with right_col:
-    st.subheader("💬 Live-Diskurs")
+    st.subheader("💬 Taktischer Live-Chat")
     chat_container = st.container(height=300)
     with chat_container:
         if isinstance(chat, list):
@@ -181,15 +183,12 @@ with right_col:
                     st.markdown(f"<span style='color:#00ff66;'>🤖 {content}</span>", unsafe_allow_html=True)
 
 st.markdown("---")
-prompt = st.chat_input("Befehl an den Broker...", key="broker_input")
+prompt = st.chat_input("Gib dem Broker eine Anweisung... (z.B. 'Analysiere den 1h RSI von BTC')", key="broker_input")
 if prompt:
     if send_chat_message("user", prompt):
-        st.success("✅ Gesendet")
+        st.success("✅ Befehl an den Bot gesendet.")
         st.cache_data.clear()
         st.rerun()
 
-with st.sidebar:
-    st.header("🧠 KI-Gedächtnis")
-    if isinstance(knowledge, list) and len(knowledge) > 0:
-        for k in knowledge: st.caption(f"📌 **{k.get('kategorie')}**: {k.get('inhalt')}")
-    st.caption("⚙️ Status: LIVE | 10x Hebel | Prognose-Lernen aktiv")
+# --- FUSSZEILE (Status ohne Sidebar) ---
+st.caption("⚙️ Systemstatus: LIVE | Modus: Scalping (Small Profits) | 24/7 Lernen")
