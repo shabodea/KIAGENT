@@ -3,7 +3,12 @@ from agents.model_router import ModelRouter
 from database.supabase import send_chat_message, save_trade, close_trade
 from config.settings import SUPABASE_URL, HEADERS
 
-MONITORED_ASSETS = ["BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "TRX-USD", "LINK-USD", "SUI-USD"]
+# --- Vollständige Asset-Liste (19 Krypto-Assets auf Kraken) ---
+MONITORED_ASSETS = [
+    "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRX-USD", 
+    "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
+    "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "NIGHT-USD"
+]
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50
@@ -67,7 +72,7 @@ def analyze_learn(asset, entry, exit, pnl, reasoning, rsi_5m, rsi_15m):
     send_chat_message("system", f"📘 ML-Lektion: {answer}")
 
 def main_loop():
-    print("🚀 24/7 Live-Bot mit Konfluenz & Dynamischem Risiko.")
+    print("🚀 24/7 Live-Bot mit Konfluenz & Dynamischem Risiko (19 Assets).")
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
