@@ -76,9 +76,8 @@ def main_loop():
     while True:
         try:
             balance, winrate = get_current_balance_and_winrate()
-            # DAS KELLY-KRITERIUM (Dynamisches Risiko)
             kelly = max(0.0, (2 * winrate) - 1)
-            risk_pct = max(0.005, min(0.03, kelly * 0.05)) # Zwischen 0.5% und 3%
+            risk_pct = max(0.005, min(0.03, kelly * 0.05))
             
             for symbol in MONITORED_ASSETS:
                 if time.time() - last_api_call.get(symbol, 0) < 20: continue
