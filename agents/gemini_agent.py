@@ -19,8 +19,8 @@ class GeminiCoreAgent:
         - Bekanntes Wissen: {str(knowledge)}
         - Offene Positionen: {str(trades[:5] if trades else 'Keine aktiven Trades')}
         """
-        # Anfrage an Router senden (bevorzugt Gemini)
-       answer, model_used = self.router.route(user_prompt, system_context, preferred_model="groq")
+        # Anfrage an Router senden (bevorzugt Groq)
+        answer, model_used = self.router.route(user_prompt, system_context, preferred_model="groq")
         print(f"🧠 Antwort generiert von {model_used}", flush=True)
         return answer
 
