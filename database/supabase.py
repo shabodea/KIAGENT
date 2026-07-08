@@ -65,7 +65,7 @@ def close_trade(asset, exit_price, pnl):
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=id&Vermögenswert=eq.{asset}&Status=eq.ACTIVE",
             headers=HEADERS
         ).json()
-        if not trades or len(trades) == 0:
+        if not isinstance(trades, list) or len(trades) == 0:
             return False
         trade_id = trades[0]['id']
         data = {
