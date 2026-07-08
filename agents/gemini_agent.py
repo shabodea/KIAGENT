@@ -1,81 +1,52 @@
 import sys
 import os
-import requests
-
-# --- SYSTEM-WEGWEISER ---
-ZENTRALER_PFAD = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ZENTRALER_PFAD not in sys.path:
-    sys.path.insert(0, ZENTRALER_PFAD)
-
 from config.settings import GEMINI_API_KEY
 from database.supabase import get_all_data_live, send_chat_message
+from agents.model_router import ModelRouter
 
 class GeminiCoreAgent:
     def __init__(self):
-        self.model = "gemini-3.5-flash" 
-        self.api_key = GEMINI_API_KEY
+        self.router = ModelRouter()
+        self.last_processed_id = 0
 
     def execute_thought_cycle(self, user_prompt):
+        # Systemkontext aus Supabase holen
         trades, chat, risiko, knowledge = get_all_data_live()
-        
-        system_kontext = f"""
+        system_context = f"""
         Du bist der autonome Chef-Analyst des KIAgent-Handelssystems.
-        Du bewohnst das Dashboard und interagierst live mit dem Master.
-        
         AKTUELLES SYSTEM-GEDÄCHTNIS:
         - Risikostatus: {str(risiko[:1] if risiko else 'OPEN')}
-        - Bekanntes Wissen/Regeln: {str(knowledge)}
+        - Bekanntes Wissen: {str(knowledge)}
         - Offene Positionen: {str(trades[:5] if trades else 'Keine aktiven Trades')}
         """
-        
-        if not self.api_key:
-            print("❌ FEHLER: Kein GEMINI_API_KEY gefunden! Prüfe die Render Environment Variables.", flush=True)
-            return "System-Fehler: Mein API-Schlüssel fehlt. Ich bin offline."
+        # Anfrage an Router senden (bevorzugt Gemini)
+        answer, model_used = self.router.route(user_prompt, system_context, preferred_model="gemini")
+        print(f"🧠 Antwort generiert von {model_used}", flush=True)
+        return answer
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key.strip()}"
-        prompt_komplett = f"{system_kontext}\n\nMaster-Anweisung: {user_prompt}\n\nAntworte kurz und präzise auf Deutsch als Broker:"
-        
-        try:
-            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt_komplett}]}]}, timeout=15).json()
-            
-            # Falls Google einen Fehler zurückgibt (z.B. falscher Key)
-            if "error" in res:
-                print(f"❌ Google API Fehler: {res['error']['message']}", flush=True)
-                return f"Google API Fehler: {res['error']['message']}"
-                
-            return res['candidates'][0]['content']['parts'][0]['text']
-        except Exception as e:
-            print(f"❌ Fehler im Denkprozess (API Error): {str(e)}", flush=True)
-            return f"Fehler im Denkprozess: {str(e)}"
-
-    def process_live_chat(self):
+    def process_live_chat(self, last_processed_id=0):
+        """
+        Prüft, ob neue User-Nachrichten vorhanden sind, und antwortet.
+        Gibt die ID der zuletzt verarbeiteten Nachricht zurück.
+        """
         try:
             _, chat, _, _ = get_all_data_live()
             if not chat or len(chat) == 0:
-                return
+                return None
 
-            # SICHERHEITS-FIX: Wir sortieren nach der 'created_at' Zeit! 
-            # Das verhindert den tödlichen UUID-Crash.
-            sortierter_chat = sorted(chat, key=lambda x: x.get('created_at', ''))
-            
-            letzte_gesamt_nachricht = sortierter_chat[-1]
-            user_nachrichten = [m for m in sortierter_chat if m.get("role") == "user"]
-            
-            if user_nachrichten:
-                letzte_user_nachricht = user_nachrichten[-1]
-                
-                if letzte_gesamt_nachricht["role"] == "user":
-                    user_input = letzte_user_nachricht["content"]
-                    
-                    print(f"🧠 Agent erkennt neue Nachricht vom Master. Denke nach...", flush=True)
-                    
-                    ki_antwort = self.execute_thought_cycle(user_input)
-                    
-                    erfolg = send_chat_message("assistant", ki_antwort)
-                    if erfolg:
-                        print("✅ KI-Antwort erfolgreich in Supabase gespeichert!", flush=True)
-                    else:
-                        print("❌ Fehler beim Speichern der KI-Antwort in Supabase!", flush=True)
+            chat.sort(key=lambda x: x.get('id', 0))
+            new_messages = [m for m in chat if m.get('id', 0) > last_processed_id and m.get('role') == 'user']
+            if not new_messages:
+                return last_processed_id
+
+            latest = new_messages[-1]
+            user_input = latest.get('content', '')
+            print(f"🧠 Neue Nachricht von Master: {user_input}", flush=True)
+
+            antwort = self.execute_thought_cycle(user_input)
+            send_chat_message("assistant", antwort)
+
+            return latest.get('id', last_processed_id)
         except Exception as e:
-            # CRITICAL: flush=True hinzugefügt, damit Render den Fehler anzeigt!
             print(f"❌ Kritischer Absturz im Agenten-Chat-Loop: {e}", flush=True)
+            return None
