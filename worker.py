@@ -3,115 +3,104 @@ import json
 import re
 import time
 import ccxt
+import yfinance as yf
 from agents.model_router import ModelRouter
 from database.supabase import send_chat_message, save_trade
 from config.settings import SUPABASE_URL, HEADERS
 
-def get_live_kraken_markets(symbol="BTC/USD"):
+# --- DEINE KOMPLETTE ASSET-LISTE ---
+MONITORED_ASSETS = [
+    "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRON-USD", 
+    "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
+    "CHAINLINK-USD", "SUI-USD", "NILLION-USD", "TAO-USD", "MIDNIGHT-USD", 
+    "SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"
+]
+
+def get_market_data(symbol):
     try:
-        exchange = ccxt.kraken()
-        ticker = exchange.fetch_ticker(symbol)
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=20)
-        return {
-            "symbol": symbol,
-            "bid": ticker['bid'],
-            "ask": ticker['ask'],
-            "last": ticker['last'],
-            "volume": ticker['baseVolume'],
-            "timestamp": ticker['timestamp'],
-            "ohlcv": ohlcv
-        }
+        if symbol in ["SPCE", "GOOGL", "NVDA", "MRVL", "ORCL"]:
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(period="2d", interval="1h")
+            if data.empty: return None
+            last_price = data['Close'].iloc[-1]
+            closes = data['Close'].tail(20).tolist()
+            return {"symbol": symbol, "last": last_price, "ohlcv": [[0,0,0,0,0,c] for c in closes]}
+        else:
+            exchange = ccxt.kraken()
+            ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
+            ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe='1h', limit=20)
+            return {
+                "symbol": symbol,
+                "last": ticker['last'],
+                "ohlcv": ohlcv
+            }
     except Exception as e:
-        print(f"❌ Fehler beim Abrufen von Kraken-Daten: {e}")
+        print(f"❌ Fehler bei {symbol}: {e}")
         return None
 
 def get_trading_decision(market_data):
     router = ModelRouter()
-    
-    # WICHTIG: Der Prompt zwingt den Bot dazu, seine Gedankenschritte aufzuschreiben!
     prompt = f"""
-    Du bist ein professioneller, aber für Menschen verständlicher Krypto-Trader. 
-    Analysiere die Marktdaten für {market_data['symbol']}:
-    - Letzter Kurs: {market_data['last']}
-    - 1h-Kerzen (letzte 5): {market_data['ohlcv'][-5:]}
-    - Volumen: {market_data['volume']}
-
-    ### AUFGABE:
-    1. Analysiere die Daten und schreibe deine GEDANKEN in einer klaren Schritt-für-Schritt-Liste auf. 
-       (z.B. "1. Ich prüfe den RSI. ... 2. Ich schaue auf den Trend. ...").
-    2. Entscheide am Ende für BUY, SELL oder HOLD.
-    3. Setze einen Stop-Loss und Take-Profit für BUY oder SELL.
-    
-    Antworte NUR im folgenden JSON-Format.
-    {{
-        "thought_process": "Schritt 1: ... Schritt 2: ... Schritt 3: ... (Deine detaillierte Gedankenkette auf Deutsch)",
-        "decision": "BUY" oder "SELL" oder "HOLD",
-        "reasoning": "Kurze Begründung für den Laien",
-        "stop_loss": 0.0 (Preis),
-        "take_profit": 0.0 (Preis),
-        "indicators": "RSI/Volumen/Indikatoren-Werte (kurz gefasst)",
-        "expected_move": "Kurze Beschreibung der erwarteten Bewegung"
-    }}
+    Analysiere {market_data['symbol']} (Kurs: {market_data['last']}, letzte 5 Kerzen: {market_data['ohlcv'][-5:]}).
+    Schreibe deine Gedankenschritte auf. 
+    Entscheide BUY/SELL/HOLD. 
+    Setze Stop-Loss & Take-Profit.
+    JSON-Format: {{"thought_process": "...", "decision": "...", "reasoning": "...", "stop_loss": 0, "take_profit": 0, "indicators": "...", "expected_move": "..."}}
     """
-    system = "Du bist ein KI-Trading-Assistent. Antworte ausschließlich mit JSON."
-    
+    system = "Antworte NUR mit JSON."
     answer, model_used = router.route(prompt, system_context=system, preferred_model="groq")
-    print(f"🧠 Trading-Entscheidung generiert von {model_used}", flush=True)
-    
+    print(f"🧠 Entscheidung für {market_data['symbol']} von {model_used}", flush=True)
     match = re.search(r'\{.*\}', answer, re.DOTALL)
     if match:
-        try:
-            return json.loads(match.group(0))
-        except Exception as e:
-            print(f"JSON Parsing Fehler: {e}")
-    return {"decision": "HOLD", "reasoning": "Fehler im JSON-Parsing", "stop_loss": 0, "take_profit": 0, "indicators": "", "expected_move": "", "thought_process": "Der Bot hatte einen technischen Fehler beim Denken."}
+        try: return json.loads(match.group(0))
+        except: pass
+    return {"decision": "HOLD", "reasoning": "Fehler", "thought_process": "Technischer Fehler"}
 
 def main_loop():
-    print("🚀 KI-Profi-Agent gestartet (Groq). Bereit für 24/7 Trading.")
+    print("🚀 KI-Profi-Agent gestartet (22 Assets).", flush=True)
     from agents.gemini_agent import GeminiCoreAgent
     agent = GeminiCoreAgent()
     last_chat_id = 0
+    current_asset_index = 0
 
     while True:
         try:
-            # 1. Marktdaten holen
-            market_data = get_live_kraken_markets()
-            if market_data:
-                # 2. Trading-Entscheidung (nur alle 60 Sekunden)
-                if int(time.time()) % 60 == 0:
-                    decision = get_trading_decision(market_data)
-                    
-                    # 3. Zuerst die GEDANKEN als System-Nachricht speichern
-                    thought = decision.get('thought_process', 'Keine Gedanken aufgezeichnet.')
-                    send_chat_message("system", thought)
-                    
-                    print(f"🤖 Entscheidung: {decision['decision']}")
-                    
-                    if decision['decision'] in ['BUY', 'SELL']:
-                        save_trade(
-                            asset=market_data['symbol'],
-                            direction=decision['decision'],
-                            entry_price=market_data['last'],
-                            stop_loss=decision.get('stop_loss', 0.0),
-                            take_profit=decision.get('take_profit', 0.0),
-                            reasoning=decision.get('reasoning', 'Keine Begründung'),
-                            indicators=decision.get('indicators', ''),
-                            expected_move=decision.get('expected_move', ''),
-                            status='PAPER'
-                        )
-                    else:
-                        print("⏸️ Entscheidung: HOLD")
+            # 1. Immer nur EIN Asset pro Sekunde abarbeiten (damit wir nie über 50/min kommen)
+            symbol = MONITORED_ASSETS[current_asset_index]
+            market_data = get_market_data(symbol)
             
-            # 4. Chat verarbeiten (alle 5 Sekunden)
+            if market_data:
+                decision = get_trading_decision(market_data)
+                send_chat_message("system", decision.get('thought_process', 'Keine Gedanken'))
+                
+                if decision['decision'] in ['BUY', 'SELL']:
+                    save_trade(
+                        asset=market_data['symbol'],
+                        direction=decision['decision'],
+                        entry_price=market_data['last'],
+                        stop_loss=decision.get('stop_loss', 0.0),
+                        take_profit=decision.get('take_profit', 0.0),
+                        reasoning=decision.get('reasoning', ''),
+                        indicators=decision.get('indicators', ''),
+                        expected_move=decision.get('expected_move', ''),
+                        status='PAPER'
+                    )
+                    print(f"✅ Trade eröffnet: {symbol} {decision['decision']}", flush=True)
+                else:
+                    print(f"⏸️ HOLD für {symbol}", flush=True)
+            
+            # Nächstes Asset in der Liste (wenn Ende erreicht, geht's wieder von vorne los)
+            current_asset_index = (current_asset_index + 1) % len(MONITORED_ASSETS)
+
+            # 2. Chat nur alle 5 Sekunden checken
             if int(time.time()) % 5 == 0:
                 new_id = agent.process_live_chat(last_chat_id)
-                if new_id is not None:
-                    last_chat_id = new_id
+                if new_id is not None: last_chat_id = new_id
 
-            time.sleep(5)
+            time.sleep(1)  # 1 Sekunde Pause pro Asset -> 22 Assets = 22 Sekunden Runde
         except Exception as e:
-            print(f"❌ Fehler im Hauptloop: {e}")
-            time.sleep(10)
+            print(f"❌ Fehler: {e}", flush=True)
+            time.sleep(5)
 
 if __name__ == "__main__":
     main_loop()
