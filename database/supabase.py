@@ -28,7 +28,10 @@ def send_chat_message(role, content):
         print(f"❌ Fehler beim Senden der Chat-Nachricht: {e}")
         return False
 
-def save_trade(asset, direction, entry_price, stop_loss=0.0, take_profit=0.0, reasoning="", indicators="", expected_move="", status='PAPER'):
+def save_trade(asset, direction, entry_price, stop_loss, take_profit, reasoning, indicators, expected_move, margin_usd, leverage, status='ACTIVE'):
+    """
+    Speichert einen Trade inklusive Marge und Hebel.
+    """
     try:
         data = {
             "Vermögenswert": asset,
@@ -40,9 +43,9 @@ def save_trade(asset, direction, entry_price, stop_loss=0.0, take_profit=0.0, re
             "Indikatoren_Setup": indicators,
             "Erwartete_Bewegung": expected_move,
             "Status": status,
-            "net_pnl": 0.0,
-            "Marge in USD": 0.0,
-            "Hebelwirkung": 1
+            "net_pnl": 0.0,  # wird beim Schließen aktualisiert
+            "Marge in USD": margin_usd,
+            "Hebelwirkung": leverage
         }
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte",
@@ -50,7 +53,7 @@ def save_trade(asset, direction, entry_price, stop_loss=0.0, take_profit=0.0, re
             json=data
         )
         if response.status_code in [200, 201]:
-            print(f"✅ Trade gespeichert: {direction} {asset} zu {entry_price}")
+            print(f"✅ Trade gespeichert: {direction} {asset} zu {entry_price} mit Marge ${margin_usd:.2f}")
             return True
         else:
             print(f"❌ Fehler beim Speichern: {response.status_code} - {response.text}")
