@@ -7,21 +7,28 @@ from database.supabase import get_all_data_live, send_chat_message
 
 st.set_page_config(page_title="🦅 10x KI-Profi-Cockpit", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS ---
+# --- CSS (für die schönen farbigen Karten) ---
 st.markdown("""
     <style>
     .metric-card { background-color: #1e222d; padding: 18px; border-radius: 10px; border-left: 5px solid #00ff66; margin-bottom: 15px; }
+    .signal-box { padding: 6px 10px; border-radius: 5px; text-align: center; font-weight: bold; font-size: 0.85rem; margin-bottom: 2px;}
+    .signal-long { background-color: #1a3b1a; color: #00ff66; border: 1px solid #00ff66; }
+    .signal-short { background-color: #3b1a1a; color: #ff4d4d; border: 1px solid #ff4d4d; }
+    .signal-wait { background-color: #2a2a2a; color: #888888; border: 1px solid #888888; }
+    .rsi-text { font-size: 0.75rem; color: #848e9c; text-align: center; }
+    .asset-row { background-color: #0e1117; padding: 10px 0; border-bottom: 1px solid #262730; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- ASSETS (Nur Kraken) ---
+# --- DEINE 19 KRAKEN-ASSETS ---
 MONITORED_ASSETS = [
     "BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "ZEC-USD", "TRX-USD", 
     "PAXG-USD", "RENDER-USD", "FET-USD", "PEPE-USD", "QNT-USD", "WLD-USD", 
     "LINK-USD", "SUI-USD", "NIL-USD", "TAO-USD", "MIDNIGHT-USD"
 ]
 
-# --- RSI BERECHNEN ---
+TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
+
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         return 50
@@ -34,35 +41,52 @@ def calculate_rsi(prices, period=14):
     rs = up / down
     return 100 - (100 / (1 + rs))
 
-# --- MARKTDATEN ABRUFEN ---
+# --- FEHLERTOLERANTE DATENABFRAGE ---
 def get_market_overview(assets):
     results = []
     try:
         exchange = ccxt.kraken()
         for symbol in assets:
+            row = {"Asset": symbol, "Kurs": "Fehler", "Orderbuch": "N/A"}
+            for tf in TIMEFRAMES:
+                row[f"{tf}_RSI"] = "N/A"
+                row[f"{tf}_Sig"] = "N/A"
+
             try:
                 ticker = exchange.fetch_ticker(symbol.replace("-", "/"))
-                row = {"Asset": symbol, "Kurs": f"${ticker['last']:,.2f}"}
-                for tf in ['5m', '15m', '1h', '4h', '1d']:
-                    ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
-                    if not ohlcv:
-                        row[f"{tf}_RSI"] = "N/A"
-                        row[f"{tf}_Sig"] = "N/A"
-                    else:
-                        rsi = calculate_rsi([c[4] for c in ohlcv])
-                        sig = "LONG" if rsi < 30 else ("SHORT" if rsi > 70 else "WARTEN")
-                        row[f"{tf}_RSI"] = f"{rsi:.1f}"
-                        row[f"{tf}_Sig"] = sig
-                results.append(row)
-            except Exception:
-                results.append({"Asset": symbol, "Kurs": "Fehler"})
+                row["Kurs"] = f"${ticker['last']:,.2f}"
+                
+                # Orderbuch (Unterstützung / Widerstand)
+                try:
+                    orderbook = exchange.fetch_order_book(symbol.replace("-", "/"), limit=3)
+                    bids = orderbook['bids'][0][0] if orderbook['bids'] else 0
+                    asks = orderbook['asks'][0][0] if orderbook['asks'] else 0
+                    row["Orderbuch"] = f"Stütze: ${bids:,.2f} | Widerstand: ${asks:,.2f}"
+                except:
+                    row["Orderbuch"] = "Orderbuch nicht verfügbar"
+
+                # RSIs für alle 5 Zeitfenster
+                for tf in TIMEFRAMES:
+                    try:
+                        ohlcv = exchange.fetch_ohlcv(symbol.replace("-", "/"), timeframe=tf, limit=50)
+                        if ohlcv:
+                            rsi = calculate_rsi([c[4] for c in ohlcv])
+                            sig = "LONG" if rsi < 30 else ("SHORT" if rsi > 70 else "WARTEN")
+                            row[f"{tf}_RSI"] = f"{rsi:.1f}"
+                            row[f"{tf}_Sig"] = sig
+                    except:
+                        pass # Bei Fehlern bleibt N/A erhalten
+            except:
+                pass # Bei Asset-Fehlern bleibt Zeile mit "Fehler" erhalten
+
+            results.append(row)
     except Exception as e:
-        st.error(f"❌ Fehler beim Abrufen der Marktdaten: {e}")
+        st.error(f"Kraken-Verbindungsfehler: {e}")
         return pd.DataFrame()
+
     return pd.DataFrame(results)
 
-# --- DATEN ABRUFEN ---
-df_market = get_market_overview(MONITORED_ASSETS)
+
 trades, chat, risiko, knowledge = get_all_data_live()
 
 # --- METRIKEN ---
@@ -88,17 +112,48 @@ col3.metric("🛡️ Risiko-Status", "NORMAL" if guthaben > 180 else "KRITISCH")
 col4.metric("⚡ Hebel", "10x FIX")
 
 st.markdown("---")
-st.subheader("📊 Live-Marktübersicht (19 Assets)")
+
+# --- DASHBOARD: ZEILENWEISE ANZEIGE (WIE DU ES LIEBST) ---
+st.subheader(f"🔥 Live-Marktübersicht ({len(MONITORED_ASSETS)} Assets)")
+
+df_market = get_market_overview(MONITORED_ASSETS)
 
 if df_market.empty:
-    st.warning("⚠️ Keine Daten von Kraken erhalten. Prüfe die Verbindung.")
+    st.warning("Marktdaten werden noch geladen oder Kraken ist kurzzeitig nicht erreichbar...")
 else:
-    # Sicherstellen, dass alle Signal-Spalten existieren
-    for tf in ['5m', '15m', '1h', '4h', '1d']:
-        col = f"{tf}_Sig"
-        if col not in df_market.columns:
-            df_market[col] = "N/A"
-    st.dataframe(df_market, use_container_width=True, hide_index=True, height=600)
+    # Kopfzeile für die Tabelle (visualisiert)
+    header_cols = st.columns([2, 2, 1.3, 1.3, 1.3, 1.3, 1.3, 3])
+    header_cols[0].markdown("**Asset**")
+    header_cols[1].markdown("**Kurs**")
+    for i, tf in enumerate(TIMEFRAMES):
+        header_cols[2+i].markdown(f"**{tf}**")
+    header_cols[-1].markdown("**Orderbuch**")
+
+    # Assets durchgehen und Zeilen zeichnen
+    for _, row in df_market.iterrows():
+        cols = st.columns([2, 2, 1.3, 1.3, 1.3, 1.3, 1.3, 3])
+        cols[0].write(f"**{row['Asset']}**")
+        cols[1].write(row['Kurs'])
+
+        # Zeitfenster-Karten generieren
+        for i, tf in enumerate(TIMEFRAMES):
+            sig = row[f"{tf}_Sig"]
+            rsi = row[f"{tf}_RSI"]
+            
+            # CSS-Klasse bestimmen
+            if sig == "LONG":
+                cls = "signal-long"
+            elif sig == "SHORT":
+                cls = "signal-short"
+            else:
+                cls = "signal-wait"
+
+            cols[2+i].markdown(f"""
+                <div class='signal-box {cls}'>{sig}</div>
+                <div class='rsi-text'>RSI {rsi}</div>
+            """, unsafe_allow_html=True)
+        
+        cols[-1].caption(row['Orderbuch'])
 
 st.markdown("---")
 
