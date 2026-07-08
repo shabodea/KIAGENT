@@ -50,8 +50,6 @@ class ModelRouter:
         except Exception as e:
             return None, str(e)
 
-   # ... (RateLimiter Klasse bleibt gleich) ...
-
     def call_groq(self, prompt, system_context=""):
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -62,9 +60,8 @@ class ModelRouter:
         if system_context:
             messages.append({"role": "system", "content": system_context})
         messages.append({"role": "user", "content": prompt})
-        # ✅ AKTUELLES GROQ-MODELL
         payload = {
-            "model": "llama-3.3-70b-versatile",  # oder "llama3-70b-8192"
+            "model": "llama-3.3-70b-versatile",
             "messages": messages,
             "temperature": 0.7
         }
@@ -77,7 +74,6 @@ class ModelRouter:
             return None, str(e)
 
     def call_deepseek(self, prompt, system_context=""):
-        # Über OpenRouter (DeepSeek)
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.openrouter_key}",
@@ -103,28 +99,45 @@ class ModelRouter:
     def route(self, prompt, system_context="", preferred_model="gemini"):
         """
         Wählt das beste verfügbare Modell aus.
-        Reihenfolge: Gemini (falls Limit nicht erreicht), dann Groq, dann DeepSeek.
+        Reihenfolge: Zuerst das bevorzugte Modell, dann Fallback.
         """
-        # 1. Versuche Gemini
+        # 1. Versuche das bevorzugte Modell
         if preferred_model == "gemini" and self.gemini_limiter.allow() and self.gemini_key:
             answer, error = self.call_gemini(prompt, system_context)
             if answer is not None:
                 return answer, "gemini"
             print(f"⚠️ Gemini fehlgeschlagen: {error}")
 
-        # 2. Versuche Groq
-        if self.groq_limiter.allow() and self.groq_key:
+        elif preferred_model == "groq" and self.groq_limiter.allow() and self.groq_key:
             answer, error = self.call_groq(prompt, system_context)
             if answer is not None:
                 return answer, "groq"
             print(f"⚠️ Groq fehlgeschlagen: {error}")
 
-        # 3. Versuche DeepSeek (immer verfügbar)
-        if self.deepseek_limiter.allow() and self.openrouter_key:
+        elif preferred_model == "deepseek" and self.deepseek_limiter.allow() and self.openrouter_key:
             answer, error = self.call_deepseek(prompt, system_context)
             if answer is not None:
                 return answer, "deepseek"
             print(f"⚠️ DeepSeek fehlgeschlagen: {error}")
 
-        # 4. Notfall: Rückgabe einer Standardantwort
+        # 2. Fallback: Versuche die anderen Modelle (in der Reihenfolge Gemini -> Groq -> DeepSeek)
+        if self.gemini_limiter.allow() and self.gemini_key:
+            answer, error = self.call_gemini(prompt, system_context)
+            if answer is not None:
+                return answer, "gemini"
+            print(f"⚠️ Gemini (Fallback) fehlgeschlagen: {error}")
+
+        if self.groq_limiter.allow() and self.groq_key:
+            answer, error = self.call_groq(prompt, system_context)
+            if answer is not None:
+                return answer, "groq"
+            print(f"⚠️ Groq (Fallback) fehlgeschlagen: {error}")
+
+        if self.deepseek_limiter.allow() and self.openrouter_key:
+            answer, error = self.call_deepseek(prompt, system_context)
+            if answer is not None:
+                return answer, "deepseek"
+            print(f"⚠️ DeepSeek (Fallback) fehlgeschlagen: {error}")
+
+        # 3. Notfall: Rückgabe einer Standardantwort
         return "Alle KI-Modelle sind derzeit nicht verfügbar. Bitte später erneut versuchen.", "none"
