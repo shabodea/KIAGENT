@@ -15,7 +15,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-MONITORED_ASSETS = ["BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "TRX-USD", "LINK-USD", "SUI-USD"]
+MONITORED_ASSETS = ["BTC-USD", "XRP-USD", "SOL-USD", "ETH-USD", "DOGE-USD", "TRX-USD", "LINK-USD", "SUI-USD","TAO-USD","RENDER-USD"]
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50
