@@ -31,7 +31,6 @@ def get_current_balance():
             f"{SUPABASE_URL}/rest/v1/Handelsgeschichte?select=net_pnl&Status=eq.CLOSED",
             headers=HEADERS
         ).json()
-        # Nur wenn es eine Liste ist, summieren wir die PnLs
         if isinstance(resp, list):
             total_pnl = sum(float(t.get('net_pnl', 0.0)) for t in resp)
             return 200.0 + total_pnl
@@ -78,7 +77,7 @@ def get_performance_summary(symbol):
             win_loss = "GEWINN" if pnl > 0 else "VERLUST"
             summary.append(f"{direction} ({win_loss}): {pnl:.2f}$ - {reason}...")
         return "\n".join(summary)
-    except: 
+    except Exception:
         return "Konnte Historie nicht laden."
 
 def get_entry_decision(market_data, balance):
@@ -177,15 +176,15 @@ def main_loop():
                             expected_move='Scalping', margin_usd=margin_per_trade, leverage=10, status='ACTIVE'
                         )
 
-                # Chat nur alle 10 Sekunden abfragen
-                if int(time.time()) % 10 == 0:
-                    new_id = agent.process_live_chat(last_chat_id)
-                    if new_id is not None: last_chat_id = new_id
+            # Chat nur alle 10 Sekunden abfragen
+            if int(time.time()) % 10 == 0:
+                new_id = agent.process_live_chat(last_chat_id)
+                if new_id is not None: last_chat_id = new_id
 
-                time.sleep(1)
-            except Exception as e:
-                print(f"❌ Fehler im Hauptloop: {e}", flush=True)
-                time.sleep(10)
+            time.sleep(1)
+        except Exception as e:
+            print(f"❌ Fehler im Hauptloop: {e}", flush=True)
+            time.sleep(10)
 
 if __name__ == "__main__":
     main_loop()
